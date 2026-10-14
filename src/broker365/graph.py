@@ -21,6 +21,9 @@ from broker365.errors import Broker365Error, GraphError, NetworkError
 MAX_RETRIES = 4
 RETRY_STATUSES = {429, 503, 504}
 IDEMPOTENT = {"GET", "PUT", "DELETE", "HEAD"}
+SAFE = {"GET", "HEAD"}  # pure reads: also retried on 500/502 (seen live: OneNote "transient")
+TRANSIENT_STATUSES, TRANSIENT_RETRIES, TRANSIENT_DELAY = {500, 502}, 2, 1.0
+MAX_TOTAL_WAIT = 120.0  # cap on time spent retrying one request across all tiers
 SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 UPLOAD_CHUNK = 320 * 1024 * 32  # 10 MiB; must be a multiple of 320 KiB
 PAGE_MAX = 100
@@ -66,18 +69,30 @@ def odata_str(value: str) -> str:
 def _send(
     method: str, url: str, headers: dict[str, str], *, idempotent: bool = False, **kw: Any
 ) -> httpx.Response:
-    """Send with retries. Non-idempotent requests are only retried on 429 (not processed);
-    a 503/504 on POST may already have taken effect (e.g. sendMail) unless the caller marks
-    it `idempotent` (e.g. create-with-conflictBehavior=fail)."""
+    """Send with retries, by tier:
+    - 423 (locked, not processed): any method, waited out for up to LOCK_WAIT;
+    - 429: any method (not processed), with Retry-After / backoff;
+    - 503/504: idempotent methods, or POSTs the caller marks `idempotent` (a 503/504 on a
+      plain POST may already have taken effect, e.g. sendMail);
+    - 500/502: safe reads and caller-marked idempotent POSTs, a couple of quick retries.
+    No retrying starts after MAX_TOTAL_WAIT seconds in total."""
     retry_on = RETRY_STATUSES if idempotent or method in IDEMPOTENT else {429}
-    attempt, lock_deadline = 0, time.monotonic() + LOCK_WAIT
+    transient_left = TRANSIENT_RETRIES if method in SAFE or idempotent else 0
+    start = time.monotonic()
+    attempt, lock_deadline = 0, start + LOCK_WAIT
     while True:
         try:
             resp = http().request(method, url, headers=headers, **kw)
         except httpx.HTTPError as exc:
             raise NetworkError(f"Network error talking to Microsoft: {type(exc).__name__}") from exc
+        if time.monotonic() - start > MAX_TOTAL_WAIT:
+            break  # overall cap across all retry tiers
         if resp.status_code == 423 and time.monotonic() < lock_deadline:
             _sleep(LOCK_RETRY)
+            continue
+        if resp.status_code in TRANSIENT_STATUSES and transient_left:
+            transient_left -= 1
+            _sleep(TRANSIENT_DELAY)
             continue
         if resp.status_code not in retry_on or attempt == MAX_RETRIES:
             break

@@ -51,8 +51,8 @@ def fake(monkeypatch):
     return install
 
 
-ALICE = {"username": "alice@contoso.com", "realm": "tid-contoso", "home_account_id": "o.tid"}
-BOB = {"username": "bob@outlook.com", "realm": MSA, "home_account_id": f"o.{MSA}"}
+ALICE = {"username": "alice@contoso.com", "realm": "common", "home_account_id": "o.tid-contoso"}
+BOB = {"username": "bob@outlook.com", "realm": "common", "home_account_id": f"o.{MSA}"}
 SIGNED_IN = {
     "access_token": "at",
     "scope": "User.Read Files.ReadWrite",
@@ -153,3 +153,19 @@ def test_default_account_case_insensitive(fake):
     assert [a["default"] for a in auth.list_accounts()] == [True, False]
     auth.logout()
     assert app.removed == [ALICE] and "default_account" not in config.load_settings()
+
+
+def test_account_type_comes_from_home_account_id_not_realm(fake):
+    # Real MSAL data seen live: realm is the authority segment ("common") for every account.
+    fake(accounts=[ALICE, BOB])
+    types = {a["username"]: (a["account_type"], a["tenant_id"]) for a in auth.list_accounts()}
+    assert types == {
+        "alice@contoso.com": ("work_or_school", "tid-contoso"),
+        "bob@outlook.com": ("personal", MSA),
+    }
+    assert auth.is_personal_account(BOB) and not auth.is_personal_account(ALICE)
+
+
+def test_tenant_falls_back_to_a_real_realm_but_never_common():
+    assert auth._tenant({"realm": MSA}) == MSA
+    assert auth._tenant({"realm": "common"}) == ""

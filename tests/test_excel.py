@@ -129,14 +129,16 @@ def test_business_read_opens_and_closes_a_session(httpx_mock, business):
         "createSession",
         "closeSession",
     ]
-    assert json.loads(reqs[0].content) == {"persistChanges": False}  # read-only: non-persistent
+    # a plain read must not persist (would save recalculated NOW()/RAND(), measured live)
+    assert json.loads(reqs[0].content) == {"persistChanges": False}
     assert "workbook-session-id" not in reqs[0].headers
 
 
 def test_close_session_failure_is_ignored(httpx_mock, business):
     session(httpx_mock)
     httpx_mock.add_response(url=RANGE + SELECT, json=RNG)
-    close(httpx_mock, status=500)
+    for _ in range(3):  # transient 500s are retried twice, then ignored
+        close(httpx_mock, status=500)
     assert excel.excel_read_range("X!1", "Sheet1", "A1:B2")["values"] == [[1, 2], [3, 3]]
 
 
@@ -355,3 +357,53 @@ def test_create_on_locked_file_explains(httpx_mock, monkeypatch):
     )
     with pytest.raises(Broker365Error, match="locked .open in Excel"):
         excel.excel_create("/b.xlsx", conflict="replace")
+
+
+@pytest.fixture
+def no_recent_writes(monkeypatch):
+    monkeypatch.setattr(excel, "_recent_writes", {})
+
+
+def test_read_right_after_our_write_uses_persistent_session(httpx_mock, business, no_recent_writes):
+    for _ in range(2):
+        session(httpx_mock)
+        close(httpx_mock)
+    httpx_mock.add_response(
+        method="PATCH", url=f"{WB}/worksheets('Sheet1')/range(address='A1')", json={}
+    )
+    httpx_mock.add_response(url=f"{WB}/worksheets('Sheet1')/range(address='A1')" + SELECT, json=RNG)
+    excel.excel_write_range("X!1", "Sheet1", "A1", [[1]])
+    excel.excel_read_range("X!1", "Sheet1", "A1")
+    creates = [r for r in httpx_mock.get_requests() if str(r.url).endswith("/createSession")]
+    assert [json.loads(r.content)["persistChanges"] for r in creates] == [True, True]
+
+
+def test_view_only_read_falls_back_to_non_persistent(httpx_mock, business, no_recent_writes):
+    excel._recent_writes["/me/drive/items/X!1/workbook"] = excel.time.monotonic()
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{WB}/createSession",
+        status_code=403,
+        json={"error": {"code": "accessDenied", "message": "read-only"}},
+        match_json={"persistChanges": True},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{WB}/createSession",
+        json={"id": "S"},
+        match_json={"persistChanges": False},
+    )
+    httpx_mock.add_response(url=RANGE + SELECT, json=RNG)
+    close(httpx_mock)
+    assert excel.excel_read_range("X!1", "Sheet1", "A1:B2")["values"] == [[1, 2], [3, 3]]
+
+
+def test_write_never_falls_back_to_non_persistent(httpx_mock, business, no_recent_writes):
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{WB}/createSession",
+        status_code=403,
+        json={"error": {"code": "accessDenied", "message": "read-only"}},
+    )
+    with pytest.raises(Broker365Error, match="accessDenied"):
+        excel.excel_write_range("X!1", "Sheet1", "A1", [[1]])

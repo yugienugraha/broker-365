@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import re
+import time
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -154,27 +155,50 @@ class _WB:
         self.g.delete(f"{self.base}/{path}", headers=self.headers)
 
 
-@contextmanager
-def _workbook(item: str, writes: bool = True) -> Iterator[_WB]:
-    """One persistent session per tool call. Measured live (Oct 2026): sessionless reads of a
-    just-written workbook lag 3-6 s, while a new session sees the latest writes at once.
-    Closing it right away keeps the post-write overwrite lock short (~20 s, as sessionless)."""
-    wb = _WB(files._g(), f"{item_ref(item)}/workbook")
+# Measured live (Oct 2026), per tool call:
+# - a write is visible at once to a new *persistent* session, but a new non-persistent
+#   session (or a sessionless read) can show a just-written fresh workbook as stale for
+#   ~4-15 s;
+# - a persistent session saves recalculated volatile formulas (NOW, RAND) on close, changing
+#   the file's eTag, so a plain read must not use one.
+# So reads are non-persistent, except shortly after this process wrote the same workbook.
+FRESH_WINDOW = 30.0
+_recent_writes: dict[str, float] = {}
+
+
+def _create_session(wb: _WB, persist: bool, writes: bool) -> str | None:
     try:
-        # Reads use a non-persistent session (Microsoft's recommendation for read-only work).
-        sid = wb.post("createSession", {"persistChanges": writes})["id"]
+        return wb.post("createSession", {"persistChanges": persist})["id"]
     except GraphError as e:
+        if persist and not writes and e.status == 403:
+            # view-only file: a read can still use a non-persistent session. Never for writes:
+            # changes made in a non-persistent session are silently discarded.
+            return _create_session(wb, False, writes)
         # Docs list personal accounts as unsupported (it worked live in Oct 2026). Only fall
         # back for "can't have a session"; throttling, 404s etc. surface as real errors.
         if not (_unsupported(e) or e.status == 400):
             raise
-        sid = None
+        return None
+
+
+@contextmanager
+def _workbook(item: str, writes: bool) -> Iterator[_WB]:
+    """A session for one tool call, closed at the end (which keeps the ~20 s post-write
+    overwrite lock short); sessionless if the account refuses sessions."""
+    wb = _WB(files._g(), f"{item_ref(item)}/workbook")
+    now = time.monotonic()
+    fresh = now - _recent_writes.get(wb.base, -FRESH_WINDOW) < FRESH_WINDOW
+    sid = _create_session(wb, persist=writes or fresh, writes=writes)
     wb.headers = {"workbook-session-id": sid} if sid else {}
     try:
         yield wb
+        if writes:
+            for base in [b for b, t in _recent_writes.items() if now - t >= FRESH_WINDOW]:
+                del _recent_writes[base]
+            _recent_writes[wb.base] = time.monotonic()
     finally:
         if sid:
-            try:  # closing twice is harmless, so 503/504 may be retried
+            try:  # closing twice is harmless, so transient failures may be retried
                 wb.g.post(f"{wb.base}/closeSession", headers=wb.headers, idempotent=True)
             except Broker365Error:
                 pass

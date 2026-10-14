@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from broker365 import config, services
-from broker365.errors import ConflictError, PathNotAllowed, ReadOnlyMode
+from broker365 import config, graph, services
+from broker365.errors import ConflictError, GraphError, PathNotAllowed, ReadOnlyMode
 from broker365.services import files
 from tests.conftest import G
 
@@ -139,7 +139,7 @@ def test_post_not_retried_on_503(httpx_mock):
 
     httpx_mock.add_response(method="POST", url=f"{G}/me/sendMail", status_code=503)
     with pytest.raises(GraphError):
-        __import__("broker365.graph").graph.client("mail").post("/me/sendMail", json={})
+        graph.client("mail").post("/me/sendMail", json={})
     assert len(httpx_mock.get_requests()) == 1
 
 
@@ -269,3 +269,30 @@ def test_lock_wait_also_covers_moves(httpx_mock):
 def test_mkdir_requires_absolute_path():
     with pytest.raises(Exception, match="absolute"):
         files.files_mkdir("Projects")
+
+
+def test_get_retries_transient_500_but_post_does_not(httpx_mock):
+    url = f"{G}/me/drive/items/ABC!1"
+    httpx_mock.add_response(url=url, status_code=500, json={"error": {"code": "20280"}})
+    httpx_mock.add_response(url=url, json=ITEM)
+    assert files.files_get("ABC!1")["id"] == "ABC!1"
+    httpx_mock.add_response(method="POST", url=f"{G}/me/sendMail", status_code=500)
+    with pytest.raises(GraphError):
+        graph.client("mail").post("/me/sendMail", json={})
+    assert sum(r.method == "POST" for r in httpx_mock.get_requests()) == 1
+
+
+def test_persistent_500_on_read_gives_up_after_two_quick_retries(httpx_mock):
+    url = f"{G}/me/drive/items/ABC!1"
+    for _ in range(3):
+        httpx_mock.add_response(url=url, status_code=500, json={"error": {"code": "x"}})
+    with pytest.raises(GraphError):
+        files.files_get("ABC!1")
+    assert len(httpx_mock.get_requests()) == 3
+
+
+def test_get_retries_transient_502(httpx_mock):
+    url = f"{G}/me/drive/items/ABC!1"
+    httpx_mock.add_response(url=url, status_code=502)
+    httpx_mock.add_response(url=url, json=ITEM)
+    assert files.files_get("ABC!1")["id"] == "ABC!1"

@@ -78,7 +78,13 @@ def app() -> msal.PublicClientApplication:
 
 
 def _tenant(account: dict[str, Any]) -> str:
-    return account.get("realm") or account.get("home_account_id", ".").split(".")[-1]
+    """Tenant id from home_account_id ('<oid>.<tid>'). MSAL's `realm` is the authority segment
+    used at sign-in ('common' here), so it can't tell personal from work accounts."""
+    home = account.get("home_account_id") or ""
+    if "." in home:
+        return home.rpartition(".")[2]
+    realm = account.get("realm") or ""
+    return "" if realm in ("common", "organizations", "consumers") else realm
 
 
 def _account_type(tenant_id: str | None) -> str:
