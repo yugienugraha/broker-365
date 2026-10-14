@@ -6,8 +6,9 @@ G = "https://graph.microsoft.com/v1.0"
 
 
 @pytest.fixture(autouse=True)
-def isolated(tmp_path, monkeypatch):
-    """Isolated broker home + workspace, fake token, no retry sleeps, fresh http client."""
+def isolated(tmp_path, monkeypatch, httpx_mock):
+    """Isolated broker home + workspace, fake token, no retry sleeps, fresh http client.
+    Requesting httpx_mock everywhere means no test can ever reach the real network."""
     for var in (
         "HERMES_HOME",
         "BROKER365_ACCOUNT",

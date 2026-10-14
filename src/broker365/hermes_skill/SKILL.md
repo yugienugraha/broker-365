@@ -45,6 +45,13 @@ code automatically when there's no display).
 - Local files are only readable/writable inside the broker365 workspace (`account_status` shows
   it). Save local files there before uploading.
 
+## SharePoint and OneNote
+- SharePoint (work/school accounts only, scope `sharepoint`): `sharepoint_sites`,
+  `sharepoint_drives`, `sharepoint_list`, `sharepoint_download`, `sharepoint_upload`. Site ids
+  can be `host,guid,guid` or `host:/sites/name:`. When `drive_id` is given, `site_id` is ignored.
+- OneNote (scope `onenote`): `onenote_notebooks`, `onenote_sections`, `onenote_pages`,
+  `onenote_read_page`, `onenote_create_page`.
+
 ## Mail / calendar safety
 - `mail_send`, `mail_reply` and `mail_forward` create a **draft** by default. Show the user the
   draft, and after explicit approval send *that* draft with `mail_send_draft(draft_id)`.

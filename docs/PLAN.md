@@ -274,7 +274,7 @@ Status as of 2026-10-14. ✅ = implemented with mocked-Graph tests. Live-tenant 
 3. ✅ **M2 OneDrive tools** in CLI and MCP, plus `broker365 hermes install`. Verified against Hermes's own MCP client (mcp 2.0.0) over stdio.
 4. ✅ **M3 Excel:** dual backend with a per-account probe. Live probe against a personal account is still pending.
 5. ✅ **M4 Word/PowerPoint:** python-docx/pptx round-trip with an eTag guard.
-6. ✅ **M5 Outlook/Calendar/Contacts/To Do** and read-only mode. Not built: audit log, OneNote/SharePoint-specific tools (only the scope bundles exist).
+6. ✅ **M5 Outlook/Calendar/Contacts/To Do, SharePoint, OneNote**, read-only mode and the `audit.log` of write operations.
 7. ⏳ **M6 Release:** create the Entra app and set `DEFAULT_CLIENT_ID`, publisher verification, PyPI, optional web UI.
 
 ## 9. Open questions for the owner

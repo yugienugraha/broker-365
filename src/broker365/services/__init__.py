@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from broker365 import config
+from broker365 import audit, config
 from broker365.errors import Broker365Error, ReadOnlyMode
 
 SERVICE_MODULES = (
@@ -23,6 +23,8 @@ SERVICE_MODULES = (
     "calendar",
     "contacts",
     "tasks",
+    "sharepoint",
+    "onenote",
 )
 
 
@@ -77,4 +79,12 @@ def call(name: str, **kwargs: Any) -> Any:
         inspect.signature(t.fn).bind(**kwargs)
     except TypeError as exc:
         raise Broker365Error(f"Bad arguments for {name}: {exc}") from None
-    return t.fn(**kwargs)
+    try:
+        result = t.fn(**kwargs)
+    except Exception as exc:
+        if t.writes:
+            audit.record(name, kwargs, error=exc)
+        raise
+    if t.writes:
+        audit.record(name, kwargs, result=result)
+    return result

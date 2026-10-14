@@ -44,17 +44,24 @@ def download_bytes(item: str) -> tuple[bytes, dict[str, Any]]:
     return _content(_file_meta(item))
 
 
-def _file_meta(item: str) -> dict[str, Any]:
-    meta = get_item(item)
+def _file_meta(item: str, g: graph.GraphClient | None = None, drive: str = "/me/drive") -> dict:
+    meta = (g or _g()).get(item_ref(item, drive))
     if "folder" in meta:
         raise Broker365Error(f"'{item}' is a folder, not a file")
     return meta
 
 
-def _content(meta: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
+def _content(
+    meta: dict[str, Any], g: graph.GraphClient | None = None, drive: str = "/me/drive"
+) -> tuple[bytes, dict[str, Any]]:
     if url := meta.get("@microsoft.graph.downloadUrl"):
         return graph.fetch(url), meta
-    return _g().download(meta["id"]), meta
+    return (g or _g()).download(meta["id"], drive=drive), meta
+
+
+def download_from(g: graph.GraphClient, drive: str, item: str) -> tuple[bytes, dict[str, Any]]:
+    """download_bytes for any drive (SharePoint libraries) with that service's client."""
+    return _content(_file_meta(item, g, drive), g, drive)
 
 
 def download_office(item: str, exts: tuple[str, ...], label: str) -> tuple[bytes, dict]:
@@ -96,10 +103,18 @@ def replace_bytes(meta: dict[str, Any], data: bytes) -> dict[str, Any]:
     return summarize(_g().upload(data, item_id=meta["id"], if_match=meta.get("eTag")))
 
 
-def create_bytes(remote_path: str, data: bytes, conflict: str = "fail") -> dict[str, Any]:
-    if not remote_path.startswith("/"):
+def create_bytes(
+    remote_path: str,
+    data: bytes,
+    conflict: str = "fail",
+    g: graph.GraphClient | None = None,
+    drive: str = "/me/drive",
+) -> dict[str, Any]:
+    if not remote_path.startswith("/") or not remote_path.strip("/"):
         raise Broker365Error("Remote paths must be absolute, e.g. /Documents/report.docx")
-    return summarize(_g().upload(data, remote_path=remote_path, conflict=conflict))
+    return summarize(
+        (g or _g()).upload(data, remote_path=remote_path, conflict=conflict, drive=drive)
+    )
 
 
 def read_local(path: str) -> Path:

@@ -24,9 +24,10 @@ src/broker365/
   errors.py       Broker365Error hierarchy (ConsentRequired, ReauthRequired, GraphError, ConflictError…)
   auth.py         MSAL PublicClientApplication, encrypted token cache, interactive + device-code login
   graph.py        httpx Graph client: paging, Retry-After, redirects without token, upload sessions
-  services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks
+  services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote
   cli.py          Typer app, entry point `broker365`
   mcp_server.py   MCP stdio server (`broker365 mcp`)
+  audit.py        JSON-lines audit.log of write tools (targets only, never content)
   hermes.py       `broker365 hermes install`: config.yaml mcp_servers entry + skill copy
   hermes_skill/   SKILL.md installed into $HERMES_HOME/skills/productivity/microsoft-365
 tests/            pytest; Graph mocked with pytest-httpx; test_mcp_stdio spawns the real server

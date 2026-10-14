@@ -46,6 +46,7 @@ broker365 call word_create '{"remote_path": "/Notes.docx", "markdown": "# Hello\
 - Everything is delegated: the agent can do only what the signed-in user can.
 - `broker365 settings --read-only` hides every write tool.
 - Local file access is sandboxed to `$BROKER365_HOME/files`. Add more with `--allow-dir`. On Windows, UNC, device and drive-relative paths are rejected before they are touched, so a prompt-injected `\\host\share` path cannot leak NTLM credentials.
+- Every write operation is recorded in `$BROKER365_HOME/audit.log` (tool, time, outcome, target ids/paths; never content).
 - Mail send/reply/forward create drafts by default. The agent sends the approved draft with `mail_send_draft`.
 - Word and PowerPoint edits are eTag-guarded, so concurrent changes produce a conflict instead
   of being overwritten.
@@ -57,5 +58,7 @@ broker365 call word_create '{"remote_path": "/Notes.docx", "markdown": "# Hello\
 | Excel cell API | ✅ live | ⚠️ probed per account; falls back to download→edit→upload |
 | Word / PowerPoint | download→edit→upload | download→edit→upload |
 | Mail, calendar, contacts, To Do | ✅ | ✅ (free/busy is work/school only) |
+| OneNote | ✅ | ✅ |
+| SharePoint sites | ✅ | — |
 
 The design rationale is in [docs/PLAN.md](docs/PLAN.md).

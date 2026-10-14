@@ -37,14 +37,15 @@ def http() -> httpx.Client:
     return _http
 
 
-def item_ref(item: str) -> str:
-    """Drive item reference from an id or an absolute OneDrive path ('/Docs/a.xlsx')."""
+def item_ref(item: str, drive: str = "/me/drive") -> str:
+    """Drive item reference from an id or an absolute path ('/Docs/a.xlsx') inside `drive`
+    (the user's OneDrive by default; '/drives/{id}' or '/sites/{id}/drive' for SharePoint)."""
     if not item:
         raise Broker365Error("A file id or path is required")
     if item.startswith("/"):
         path = item.rstrip("/")
-        return "/me/drive/root" if not path else f"/me/drive/root:{quote(path)}:"
-    return f"/me/drive/items/{quote(item, safe='!')}"
+        return f"{drive}/root" if not path else f"{drive}/root:{quote(path)}:"
+    return f"{drive}/items/{quote(item, safe='!')}"
 
 
 def seg(value: str, what: str = "id") -> str:
@@ -154,10 +155,12 @@ class GraphClient:
 
     # ---- file content -----------------------------------------------------------------
 
-    def download(self, item: str, params: dict[str, Any] | None = None) -> bytes:
+    def download(
+        self, item: str, params: dict[str, Any] | None = None, drive: str = "/me/drive"
+    ) -> bytes:
         """Return file bytes. Graph answers /content with a 302 to a pre-authenticated URL,
         which is followed without the bearer token."""
-        resp = self.request("GET", f"{item_ref(item)}/content", params=params)
+        resp = self.request("GET", f"{item_ref(item, drive)}/content", params=params)
         if resp.is_redirect:
             return fetch(resp.headers["Location"])
         return resp.content
@@ -170,11 +173,13 @@ class GraphClient:
         item_id: str | None = None,
         conflict: str = "replace",
         if_match: str | None = None,
+        drive: str = "/me/drive",
     ) -> dict[str, Any]:
-        """Upload bytes to a new path or over an existing item (optionally eTag-guarded)."""
+        """Upload bytes to a new path or over an existing item (optionally eTag-guarded);
+        files over 4 MB go through an upload session."""
         if bool(remote_path) == bool(item_id):
             raise Broker365Error("Pass exactly one of remote_path or item_id")
-        target = item_ref(remote_path or item_id or "")
+        target = item_ref(remote_path or item_id or "", drive)
         headers = {"If-Match": if_match} if if_match else {}
         if len(data) <= SIMPLE_UPLOAD_MAX:
             params = {"@microsoft.graph.conflictBehavior": conflict} if remote_path else None
