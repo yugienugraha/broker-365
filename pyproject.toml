@@ -26,6 +26,8 @@ dependencies = [
     "python-docx>=1.1",
     "python-pptx>=1.0",
     "tomli-w>=1.0",
+    "starlette>=0.40",  # local dashboard (broker365 ui)
+    "uvicorn>=0.30",
     "tzdata>=2024.1",  # IANA zones for zoneinfo on Windows
 ]
 

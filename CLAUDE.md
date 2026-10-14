@@ -27,7 +27,10 @@ src/broker365/
   services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote
   cli.py          Typer app, entry point `broker365`
   mcp_server.py   MCP stdio server (`broker365 mcp`)
-  audit.py        JSON-lines audit.log of write tools (targets only, never content)
+  audit.py        JSON-lines audit.log of write tools and admin:* actions (targets only, never content)
+  ui/             `broker365 ui` local dashboard: server.py (Starlette; all access checks in the `guard`
+                  middleware: Host check, per-run token -> HttpOnly SameSite=Strict cookie, X-Broker365
+                  header on /api) + static/ (vanilla JS, strict CSP, textContent only)
   hermes.py       `broker365 hermes install`: config.yaml mcp_servers entry + skill copy
   hermes_skill/   SKILL.md installed into $HERMES_HOME/skills/productivity/microsoft-365
 tests/            pytest; Graph mocked with pytest-httpx; test_mcp_stdio spawns the real server

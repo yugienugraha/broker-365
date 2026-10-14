@@ -40,6 +40,16 @@ broker365 status
 Scope bundles: `files`, `files-shared`, `sharepoint`, `mail`, `calendar`, `contacts`, `tasks`,
 `onenote`. Run `login` again with more bundles at any time.
 
+## Dashboard
+```bash
+broker365 ui                 # opens http://127.0.0.1:8365 in your browser
+broker365 ui --no-browser    # just print the link (e.g. on a VPS)
+```
+The dashboard lets you sign in to Microsoft accounts (device code), pick the default account,
+switch read-only mode, manage allowed folders, connect Hermes, and review activity.
+It listens only on `127.0.0.1` and uses a one-time link with a secret token. On a VPS, reach it
+through an SSH tunnel: `ssh -L 8365:127.0.0.1:8365 you@vps`, then open the printed link locally.
+
 ## Use with Hermes
 ```bash
 broker365 hermes install      # adds the `m365` MCP server to $HERMES_HOME/config.yaml + installs the skill

@@ -68,6 +68,23 @@ def available_tools() -> list[Tool]:
     return list(tools)
 
 
+def tool_catalog() -> list[dict[str, Any]]:
+    """Every registered tool with its flags; `hidden` marks tools agents can't see right now
+    (write tools in read-only mode)."""
+    visible = {t.name for t in available_tools()}
+    return [
+        {
+            "name": t.name,
+            "bundle": t.bundle,
+            "writes": t.writes,
+            "destructive": t.destructive,
+            "description": t.description.splitlines()[0],
+            "hidden": t.name not in visible,
+        }
+        for t in load_all().values()
+    ]
+
+
 def call(name: str, **kwargs: Any) -> Any:
     tools = load_all()
     if name not in tools:

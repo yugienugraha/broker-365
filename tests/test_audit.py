@@ -67,3 +67,53 @@ def test_audit_records_attachments_and_share_link(httpx_mock):
     [entry] = entries()
     assert entry["target"]["scope"] == "anonymous"
     assert entry["result"]["url"] == "https://1drv.ms/x"
+
+
+def test_admin_actions_are_audited_from_shared_functions(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from broker365 import audit, auth, hermes
+    from broker365.cli import app
+    from tests.test_auth import BOB, SIGNED_IN, FakeApp
+
+    fake = FakeApp(accounts=[BOB], device_results=[SIGNED_IN])
+    monkeypatch.setattr(auth, "app", lambda: fake)
+    flow = auth.device_flow_start(["files"])
+    auth.device_flow_complete(flow["flow_id"], wait_seconds=1)
+    auth.set_default("BOB@outlook.com")
+    auth.logout()
+    (tmp_path / "hh").mkdir()
+    (tmp_path / "hh" / "config.yaml").write_text("model: x\n")
+    hermes.install(str(tmp_path / "hh"), dry_run=True)  # dry run: nothing changed, not audited
+    hermes.install(str(tmp_path / "hh"))
+    d = tmp_path / "docs"
+    d.mkdir()
+    result = CliRunner().invoke(app, ["settings", "--read-only", "--allow-dir", str(d)])
+    assert result.exit_code == 0, result.output
+    CliRunner().invoke(app, ["settings"])  # no change, not audited
+
+    got = [(e["tool"], e["target"], e["ok"]) for e in audit.read()]
+    assert got == [
+        ("admin:settings", {"read_only": True, "dirs_added": [str(d.resolve())]}, True),
+        ("admin:hermes_install", {"hermes_home": str(tmp_path / "hh")}, True),
+        ("admin:logout", {"username": "bob@outlook.com"}, True),
+        ("admin:set_default", {"username": "bob@outlook.com"}, True),
+        ("admin:login", {"username": "bob@outlook.com", "scopes": ["files"]}, True),
+    ]
+    assert all(e["ts"] for e in audit.read())
+    assert "secret-device-code" not in (config.broker_home() / "audit.log").read_text()
+
+
+@pytest.mark.parametrize("block", [7, 64, 1 << 16])
+def test_read_returns_tail_of_large_log(monkeypatch, block):
+    from broker365 import audit
+
+    monkeypatch.setattr(audit, "_BLOCK", block)
+    path = config.broker_home() / "audit.log"
+    lines = [json.dumps({"tool": "t", "n": i, "note": "é" * (i % 5)}) for i in range(10_000)]
+    lines[-3] = "{broken"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert [e["n"] for e in audit.read(5)] == [9999, 9998, 9996, 9995, 9994]
+    assert audit.read(0) == []
+    path.write_text('{"n": 1}\n{"n": 2}', encoding="utf-8")  # no trailing newline
+    assert audit.read(5) == [{"n": 2}, {"n": 1}]

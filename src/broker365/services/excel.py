@@ -209,14 +209,15 @@ def _unsupported(err: GraphError) -> bool:
 
 
 def _remember(username: str, backend: str) -> None:
-    cache = dict(config.load_settings().get("excel_backend", {}))
-    cache[username] = backend
-    config.update_settings(excel_backend=cache)
+    # Locked read-modify-write within this process. Writes from another process (e.g. the CLI
+    # and the MCP server at once) are not locked; the worst case is a lost cache entry, which
+    # only means one extra probe later.
+    config.set_excel_backend(username, backend)
 
 
 def reset_probe() -> None:
     """Forget the cached per-account backend choice so personal accounts are probed again."""
-    config.update_settings(excel_backend=None)
+    config.change_settings(reset_excel_probe=True)
 
 
 def _probe(item: str, username: str) -> str:

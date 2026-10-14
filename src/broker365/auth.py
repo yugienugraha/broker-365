@@ -21,7 +21,7 @@ import msal
 from msal_extensions import FilePersistence, PersistedTokenCache, build_encrypted_persistence
 from msal_extensions.persistence import PersistenceNotFound
 
-from broker365 import config
+from broker365 import audit, config
 from broker365.errors import Broker365Error, ConsentRequired, ReauthRequired
 
 log = logging.getLogger(__name__)
@@ -140,8 +140,10 @@ def is_personal(username: str | None = None) -> bool:
 
 def set_default(username: str) -> None:
     # store MSAL's spelling so later comparisons are exact
-    config.update_settings(default_account=current_account(username)["username"])
+    name = current_account(username)["username"]
+    config.update_settings(default_account=name)
     _tokens.clear()
+    audit.record_admin("set_default", {"username": name})
 
 
 def logout(username: str | None = None) -> str:
@@ -151,6 +153,7 @@ def logout(username: str | None = None) -> str:
     name = acct.get("username", "")
     if (config.load_settings().get("default_account") or "").lower() == name.lower():
         config.update_settings(default_account=None)
+    audit.record_admin("logout", {"username": name})
     return name
 
 
@@ -193,6 +196,8 @@ def _finish_login(result: dict[str, Any]) -> dict[str, Any]:
     if username and not settings.get("default_account"):
         config.update_settings(default_account=username)
     _tokens.clear()
+    granted = result.get("scope", "").split()
+    audit.record_admin("login", {"username": username, "scopes": _bundles_granted(granted)})
     return {
         "username": username,
         "name": claims.get("name"),
@@ -200,6 +205,14 @@ def _finish_login(result: dict[str, Any]) -> dict[str, Any]:
         "tenant_id": claims.get("tid"),
         "scopes": result.get("scope", "").split(),
     }
+
+
+def _bundles_granted(scopes: list[str]) -> list[str]:
+    """Scope bundles fully covered by the granted scopes (names only, for the audit log)."""
+    have = {s.rsplit("/", 1)[-1].lower() for s in scopes}
+    return [
+        b for b in config.user_bundles() if {s.lower() for s in config.SCOPE_BUNDLES[b]} <= have
+    ]
 
 
 def login_interactive(bundles: list[str], port: int | None = None) -> dict[str, Any]:

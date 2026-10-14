@@ -14,7 +14,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from broker365 import config
+from broker365 import audit, config
 from broker365.errors import Broker365Error
 
 SERVER_KEY = "m365"
@@ -93,6 +93,25 @@ def patched_config(text: str) -> str:
     return f"{text}{sep}\nmcp_servers:\n{server_block()}"
 
 
+def status(home: str | None = None) -> dict[str, Any]:
+    """Whether Hermes is found and has our MCP server entry and skill installed."""
+    try:
+        hh = hermes_home(home)
+        text = (hh / "config.yaml").read_text(encoding="utf-8", errors="replace")
+    except (Broker365Error, OSError):
+        return {"found": False, "home": None, "mcp_server": False, "skill": False}
+    try:
+        has_server = _has_server(text)
+    except (UnicodeDecodeError, ValueError):  # unparsable config.yaml: report, don't crash
+        has_server = False
+    return {
+        "found": True,
+        "home": str(hh),
+        "mcp_server": has_server,
+        "skill": (hh / SKILL_DIR / "SKILL.md").exists(),
+    }
+
+
 def install(home: str | None = None, dry_run: bool = False) -> dict[str, Any]:
     hh = hermes_home(home)
     cfg = hh / "config.yaml"
@@ -113,5 +132,7 @@ def install(home: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         src = resources.files("broker365") / "hermes_skill" / "SKILL.md"
         (skill_dest / "SKILL.md").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     result["skill"] = str(skill_dest / "SKILL.md")
+    if not dry_run:
+        audit.record_admin("hermes_install", {"hermes_home": str(hh)})
     result["next"] = "Restart Hermes so it connects to the m365 MCP server."
     return result

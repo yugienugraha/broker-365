@@ -60,3 +60,46 @@ def test_mcp_enforces_read_only_at_call_time(monkeypatch):
     monkeypatch.setenv("BROKER365_READ_ONLY", "1")
     with pytest.raises(Exception, match="read-only"):
         asyncio.run(server.call_tool("files_delete", {"item": "ABC!1"}))
+
+
+def test_tools_catalog_matches_cli_and_flags_hidden(monkeypatch):
+    catalog = {t["name"]: t for t in services.tool_catalog()}
+    assert catalog["files_delete"] == {
+        "name": "files_delete",
+        "bundle": "files",
+        "writes": True,
+        "destructive": True,
+        "description": catalog["files_delete"]["description"],
+        "hidden": False,
+    }
+    assert (
+        catalog["files_delete"]["description"]
+        and "\n" not in catalog["files_delete"]["description"]
+    )
+    monkeypatch.setenv("BROKER365_READ_ONLY", "1")
+    catalog = {t["name"]: t for t in services.tool_catalog()}
+    assert catalog["files_delete"]["hidden"] and not catalog["files_list"]["hidden"]
+    output = runner.invoke(app, ["tools"]).output
+    assert "files_delete" not in output and catalog["files_list"]["description"] in output
+
+
+def test_settings_prints_effective_view(tmp_path):
+    d = tmp_path / "docs"
+    d.mkdir()
+    out = json.loads(runner.invoke(app, ["settings", "--allow-dir", str(d)]).output)
+    assert out == {
+        "read_only": False,
+        "read_only_env": False,
+        "allowed_dirs": [str(d.resolve())],
+        "workspace": out["workspace"],
+        "excel_backend": {},
+    }
+    out = json.loads(runner.invoke(app, ["settings", "--disallow-dir", str(d)]).output)
+    assert out["allowed_dirs"] == []
+
+
+def test_scopes_help_lists_user_bundles():
+    from broker365 import config
+
+    assert config.user_bundles()[0] == "files" and "core" not in config.user_bundles()
+    assert "files-shared" in runner.invoke(app, ["login", "--help"]).output

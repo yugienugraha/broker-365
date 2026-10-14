@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>broker365</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="shell" id="shell">
+    <header class="topbar">
+      <a class="brand" href="#/overview" aria-label="broker365 overview">
+        <img src="/static/favicon.svg" alt="" width="28" height="28">
+        <span class="brand-name">broker365</span>
+      </a>
+      <div class="whoami" id="whoami" aria-live="polite">
+        <span class="whoami-label">Default account</span>
+        <span class="whoami-value" id="whoami-value">Loading…</span>
+      </div>
+    </header>
+
+    <nav class="sidebar" aria-label="Sections">
+      <ul id="nav">
+        <li><a href="#/overview" data-route="overview">Overview</a></li>
+        <li><a href="#/accounts" data-route="accounts">Accounts</a></li>
+        <li><a href="#/settings" data-route="settings">Settings</a></li>
+        <li><a href="#/hermes" data-route="hermes">Hermes</a></li>
+        <li><a href="#/activity" data-route="activity">Activity</a></li>
+        <li><a href="#/tools" data-route="tools">Tools</a></li>
+      </ul>
+    </nav>
+
+    <main id="main" class="main" tabindex="-1">
+      <p class="loading">Loading…</p>
+    </main>
+
+    <footer class="footer">
+      <p>Runs locally · only reachable from this machine</p>
+    </footer>
+  </div>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+
+  <noscript><p class="noscript">broker365 needs JavaScript enabled to show the dashboard.</p></noscript>
+</body>
+</html>

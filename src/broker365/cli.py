@@ -10,7 +10,7 @@ from typing import Any
 
 import typer
 
-from broker365 import __version__, auth, config, services
+from broker365 import __version__, audit, auth, config, services
 from broker365.errors import Broker365Error
 
 app = typer.Typer(
@@ -25,7 +25,7 @@ ScopesOpt = typer.Option(
     "files",
     "--scopes",
     "-s",
-    help=f"Comma-separated bundles: {', '.join(b for b in config.SCOPE_BUNDLES if b != 'core')}",
+    help=f"Comma-separated bundles: {', '.join(config.user_bundles())}",
 )
 
 
@@ -129,27 +129,22 @@ def settings(
     ),
 ) -> None:
     """View or change persisted settings (config.toml)."""
-    if reset_excel_probe:
-        from broker365.services import excel
-
-        excel.reset_probe()
-
-    def norm(paths: list[str] | None) -> set[str]:
-        return {str(config.normalize_dir(p)) for p in paths or [] if p}
-
-    dirs = set(config.load_settings().get("allowed_dirs", [])) | norm(allow_dir)
-    changes: dict[str, Any] = {"allowed_dirs": sorted(dirs - norm(disallow_dir)) or None}
-    if read_only is not None:
-        changes["read_only"] = read_only
-    _out(config.update_settings(**changes))
+    changed = config.change_settings(
+        read_only, allow_dir or (), disallow_dir or (), reset_excel_probe=reset_excel_probe
+    )
+    if changed:
+        audit.record_admin("settings", changed)
+    _out(config.settings_view())
 
 
 @app.command("tools")
 def list_tools() -> None:
     """List the tools available to agents."""
-    for t in services.available_tools():
-        flag = " [destructive]" if t.destructive else " [write]" if t.writes else ""
-        typer.echo(f"{t.name:<24} {t.description.splitlines()[0]}{flag}")
+    for t in services.tool_catalog():
+        if t["hidden"]:
+            continue
+        flag = " [destructive]" if t["destructive"] else " [write]" if t["writes"] else ""
+        typer.echo(f"{t['name']:<24} {t['description']}{flag}")
 
 
 @app.command()
@@ -174,6 +169,40 @@ def admin_consent_url(tenant: str = typer.Argument(..., help="Tenant domain or I
     """URL a tenant admin opens to approve broker365 for their whole organisation."""
     typer.echo(
         f"https://login.microsoftonline.com/{tenant}/adminconsent?client_id={config.client_id()}"
+    )
+
+
+@app.command()
+def ui(
+    host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind (keep loopback)."),
+    port: int = typer.Option(8365, "--port"),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Only print the URL."),
+) -> None:
+    """Open the local web dashboard (accounts, sign-in, settings, Hermes, activity)."""
+    import secrets
+
+    import uvicorn
+
+    from broker365.ui.server import LOOPBACK, create_app, url_host
+
+    token = secrets.token_urlsafe(32)
+    if host not in LOOPBACK:
+        typer.echo(
+            f"warning: binding to {host}. The dashboard controls your Microsoft account; "
+            "only reach it through an SSH tunnel (ssh -L 8365:127.0.0.1:8365 ...).",
+            err=True,
+        )
+    url = f"http://{url_host(host)}:{port}/?token={token}"
+    typer.echo(f"broker365 dashboard: {url}")
+    typer.echo("Press Ctrl+C to stop.")
+    if not no_browser:
+        webbrowser.open(url)
+    uvicorn.run(
+        create_app(token, port, host=host),
+        host=host,
+        port=port,
+        log_level="warning",
+        access_log=False,  # access lines would include the ?token= query
     )
 
 
