@@ -1,10 +1,20 @@
 [project]
 name = "broker365"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Local credential broker + MCP server that connects AI agents (Hermes) to Microsoft 365 / OneDrive via Microsoft Graph — no Azure setup for end users."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Yugie Nugraha" }]
+keywords = ["microsoft-365", "microsoft-graph", "onedrive", "excel", "mcp", "hermes", "ai-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Office/Business",
+]
 dependencies = [
     "msal>=1.31",
     "msal-extensions>=1.2",
@@ -21,12 +31,19 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-httpx>=0.30", "pyyaml>=6", "ruff>=0.6", "mypy>=1.10"]
 
+[project.urls]
+Homepage = "https://github.com/yugienugraha/broker-365"
+Issues = "https://github.com/yugienugraha/broker-365/issues"
+
 [project.scripts]
 broker365 = "broker365.cli:app"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]  # PEP 639 license metadata
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/broker365/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/broker365"]

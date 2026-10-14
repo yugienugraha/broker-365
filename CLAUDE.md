@@ -42,6 +42,7 @@ pytest
 ruff check . && ruff format .
 broker365 status           # paths, accounts, token health
 broker365 tools            # registered tools
+# releasing: docs/RELEASING.md
 broker365 call files_list '{"path": "/"}'
 ```
 
