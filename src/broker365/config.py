@@ -13,10 +13,11 @@ import tomli_w
 
 from broker365.errors import Broker365Error, PathNotAllowed
 
-# Public client ID of the publisher's multi-tenant app registration (docs/PLAN.md §3.1).
-# Not a secret. Fill in after creating the Entra app; users may override with BROKER365_CLIENT_ID.
+# Public client ID of the publisher's multi-tenant app registration "broker365" (docs/PLAN.md
+# §3.1; any Entra tenant + personal accounts, public client, no secret). Not a secret: it
+# identifies the app, not a user. Users may override it with BROKER365_CLIENT_ID.
 PLACEHOLDER_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
-DEFAULT_CLIENT_ID = PLACEHOLDER_CLIENT_ID
+DEFAULT_CLIENT_ID = "5b97899a-d268-4f28-b4e6-3ed7ee60e65f"
 
 AUTHORITY = "https://login.microsoftonline.com/common"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"

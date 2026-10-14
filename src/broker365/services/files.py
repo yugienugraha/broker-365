@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from broker365 import config, graph
-from broker365.errors import Broker365Error
+from broker365.errors import Broker365Error, GraphError
 from broker365.graph import item_ref
 from broker365.services import tool
 
@@ -112,9 +112,8 @@ def create_bytes(
 ) -> dict[str, Any]:
     if not remote_path.startswith("/") or not remote_path.strip("/"):
         raise Broker365Error("Remote paths must be absolute, e.g. /Documents/report.docx")
-    return summarize(
-        (g or _g()).upload(data, remote_path=remote_path, conflict=conflict, drive=drive)
-    )
+    g = g or _g()
+    return summarize(g.upload(data, remote_path=remote_path, conflict=conflict, drive=drive))
 
 
 def read_local(path: str) -> Path:
@@ -200,12 +199,23 @@ def files_write_text(
 
 @tool("files", writes=True)
 def files_mkdir(path: str) -> dict[str, Any]:
-    """Create a folder at an absolute path (parents must exist)."""
+    """Create a folder at an absolute path (parents must exist). Idempotent: if it already
+    exists, the existing folder is returned with existed=true."""
     parent, _, name = path.rstrip("/").rpartition("/")
-    if not name:
+    if not path.startswith("/") or not name:
         raise Broker365Error("Folder path must be absolute, e.g. /Projects/2026")
     body = {"name": name, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}
-    return summarize(_g().post(f"{item_ref(parent or '/')}/children", json=body))
+    try:
+        # conflictBehavior=fail makes a retried create harmless (seen live: transient 504s)
+        created = _g().post(f"{item_ref(parent or '/')}/children", json=body, idempotent=True)
+    except GraphError as e:
+        if e.status != 409:
+            raise
+        existing = get_item(path)  # e.g. a retry after a 504 that had in fact succeeded
+        if "folder" not in existing:
+            raise
+        return {**summarize(existing), "existed": True}
+    return summarize(created)
 
 
 @tool("files", writes=True)

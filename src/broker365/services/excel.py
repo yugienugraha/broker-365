@@ -1,7 +1,7 @@
-"""Excel workbooks (.xlsx). Work/school accounts use the Graph Workbook API (with a persistent
-session for multi-call tools). Personal accounts are probed once: the Workbook API is used
-sessionless when it works, otherwise an openpyxl download/edit/re-upload round-trip (eTag
-guarded) runs behind the same tool signatures.
+"""Excel workbooks (.xlsx) via the Graph Workbook API, each tool call inside its own
+persistent session (sessionless if createSession is refused). Personal accounts are
+probed once; if the Workbook API is unavailable, an openpyxl download/edit/re-upload
+round-trip (eTag guarded) runs behind the same tool signatures.
 """
 
 from __future__ import annotations
@@ -155,20 +155,29 @@ class _WB:
 
 
 @contextmanager
-def _workbook(item: str, session: bool) -> Iterator[_WB]:
+def _workbook(item: str, writes: bool = True) -> Iterator[_WB]:
+    """One persistent session per tool call. Measured live (Oct 2026): sessionless reads of a
+    just-written workbook lag 3-6 s, while a new session sees the latest writes at once.
+    Closing it right away keeps the post-write overwrite lock short (~20 s, as sessionless)."""
     wb = _WB(files._g(), f"{item_ref(item)}/workbook")
-    if not session:
-        yield wb
-        return
-    sid = wb.post("createSession", {"persistChanges": True})["id"]
-    wb.headers = {"workbook-session-id": sid}
+    try:
+        # Reads use a non-persistent session (Microsoft's recommendation for read-only work).
+        sid = wb.post("createSession", {"persistChanges": writes})["id"]
+    except GraphError as e:
+        # Docs list personal accounts as unsupported (it worked live in Oct 2026). Only fall
+        # back for "can't have a session"; throttling, 404s etc. surface as real errors.
+        if not (_unsupported(e) or e.status == 400):
+            raise
+        sid = None
+    wb.headers = {"workbook-session-id": sid} if sid else {}
     try:
         yield wb
     finally:
-        try:
-            wb.post("closeSession")
-        except Broker365Error:
-            pass
+        if sid:
+            try:  # closing twice is harmless, so 503/504 may be retried
+                wb.g.post(f"{wb.base}/closeSession", headers=wb.headers, idempotent=True)
+            except Broker365Error:
+                pass
 
 
 def _unsupported(err: GraphError) -> bool:
@@ -236,7 +245,6 @@ def _run(
     px_op: _Op | None,
     *,
     writes: bool = False,
-    session: bool = False,
     feature: str = "This operation",
 ) -> dict[str, Any]:
     """Run wb_op via the Workbook API or px_op via an openpyxl round-trip. px_op=None marks a
@@ -244,7 +252,7 @@ def _run(
     backend, username = _select(item)
     if backend == WORKBOOK:
         try:
-            with _workbook(item, session and username is None) as wb:
+            with _workbook(item, writes) as wb:
                 return {**(wb_op(wb) or {}), "backend": WORKBOOK}
         except GraphError as e:
             if username is None or not _unsupported(e):
@@ -488,7 +496,6 @@ def excel_write_range(item: str, sheet: str, address: str, values: list[list[Any
         lambda wb: _wb_write(wb, sheet, area, values),
         lambda wb: _px_write(_ws(wb, sheet), area, values),
         writes=True,
-        session=area.rows * area.cols > CHUNK_CELLS,
     )
     return {**_written(area), **out}
 
@@ -517,9 +524,7 @@ def excel_append_rows(item: str, sheet: str, rows: list[list[Any]]) -> dict[str,
         _px_write(ws, area, rows)
         return _written(area)
 
-    # A session only pays off when the write is split into several bands.
-    cells = len(rows) * len(rows[0])
-    return _run(item, wb_op, px_op, writes=True, session=cells > CHUNK_CELLS)
+    return _run(item, wb_op, px_op, writes=True)
 
 
 @tool("files", writes=True)

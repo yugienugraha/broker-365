@@ -15,8 +15,10 @@ pipx install git+https://github.com/yugienugraha/broker-365.git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 
-> **Publisher note:** until the public client ID is built in, set `BROKER365_CLIENT_ID` to your
-> app registration. See [docs/AZURE_SETUP.md](docs/AZURE_SETUP.md).
+The public client ID of the `broker365` app registration is built in, so no Azure setup is
+needed. The consent screen shows the app as *unverified* until publisher verification is done.
+Some work/school tenants then need an admin to approve it (`broker365 admin-consent-url <tenant>`).
+To use your own registration instead, set `BROKER365_CLIENT_ID` (see [docs/AZURE_SETUP.md](docs/AZURE_SETUP.md)).
 
 ## Sign in
 ```bash
@@ -55,7 +57,7 @@ broker365 call word_create '{"remote_path": "/Notes.docx", "markdown": "# Hello\
 | | Work/school | Personal |
 |---|---|---|
 | OneDrive files | ✅ | ✅ |
-| Excel cell API | ✅ live | ⚠️ probed per account; falls back to download→edit→upload |
+| Excel cell API | ✅ live | ✅ live (verified Oct 2026); download→edit→upload fallback if an account refuses it |
 | Word / PowerPoint | download→edit→upload | download→edit→upload |
 | Mail, calendar, contacts, To Do | ✅ | ✅ (free/busy is work/school only) |
 | OneNote | ✅ | ✅ |

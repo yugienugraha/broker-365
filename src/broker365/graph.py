@@ -24,6 +24,9 @@ IDEMPOTENT = {"GET", "PUT", "DELETE", "HEAD"}
 SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 UPLOAD_CHUNK = 320 * 1024 * 32  # 10 MiB; must be a multiple of 320 KiB
 PAGE_MAX = 100
+# 423 = resource locked (open in Excel, or a Workbook API write moments ago: measured ~20 s
+# in Oct 2026). The request was not processed, so any method may be retried while it lasts.
+LOCK_WAIT, LOCK_RETRY = 60.0, 5.0
 GRAPH_HOST = urlsplit(config.GRAPH_BASE).netloc
 
 _sleep = time.sleep  # patched in tests
@@ -60,15 +63,22 @@ def odata_str(value: str) -> str:
     return value.replace("'", "''")
 
 
-def _send(method: str, url: str, headers: dict[str, str], **kw: Any) -> httpx.Response:
+def _send(
+    method: str, url: str, headers: dict[str, str], *, idempotent: bool = False, **kw: Any
+) -> httpx.Response:
     """Send with retries. Non-idempotent requests are only retried on 429 (not processed);
-    a 503/504 on POST may already have taken effect (e.g. sendMail)."""
-    retry_on = RETRY_STATUSES if method in IDEMPOTENT else {429}
-    for attempt in range(MAX_RETRIES + 1):
+    a 503/504 on POST may already have taken effect (e.g. sendMail) unless the caller marks
+    it `idempotent` (e.g. create-with-conflictBehavior=fail)."""
+    retry_on = RETRY_STATUSES if idempotent or method in IDEMPOTENT else {429}
+    attempt, lock_deadline = 0, time.monotonic() + LOCK_WAIT
+    while True:
         try:
             resp = http().request(method, url, headers=headers, **kw)
         except httpx.HTTPError as exc:
             raise NetworkError(f"Network error talking to Microsoft: {type(exc).__name__}") from exc
+        if resp.status_code == 423 and time.monotonic() < lock_deadline:
+            _sleep(LOCK_RETRY)
+            continue
         if resp.status_code not in retry_on or attempt == MAX_RETRIES:
             break
         try:
@@ -76,6 +86,7 @@ def _send(method: str, url: str, headers: dict[str, str], **kw: Any) -> httpx.Re
         except ValueError:
             delay = 2.0**attempt
         _sleep(min(delay, 60.0))
+        attempt += 1
     if resp.is_error:
         raise GraphError.from_response(resp)
     return resp

@@ -15,7 +15,7 @@ The full design, Azure setup and milestones are in **[docs/PLAN.md](docs/PLAN.md
 - Local filesystem access always goes through `config.resolve_local()`, the workspace sandbox.
 - Mail send/reply/forward create a draft unless `confirm=True`. Approved drafts are sent with `mail_send_draft`, so no orphan drafts are left.
 - Graph has no edit API for Word or PowerPoint. Round-trip them with python-docx/python-pptx (download, edit, upload with `If-Match` eTag).
-- OneDrive file APIs fully support personal accounts. The Excel Workbook API (`.xlsx` only) is fully supported for business accounts but **inconsistent for personal ones**: Microsoft's docs contradict each other, and `createSession` isn't supported. Personal accounts run a capability probe and use the Workbook API sessionless, or fall back to an openpyxl round-trip behind the same tool signatures. See docs/PLAN.md §5.
+- OneDrive file APIs fully support personal accounts. The Excel Workbook API (`.xlsx` only) works for business **and** personal accounts, including `createSession` (verified live, Oct 2026, despite the docs). Every Workbook tool call runs in its own persistent session (create, work, close), because sessionless reads lag writes by seconds while a fresh session sees them at once. Uploads wait out the ~20 s overwrite lock (423) that any workbook write leaves behind. Personal accounts still get a per-account capability probe with an openpyxl round-trip fallback behind the same tool signatures. See docs/PLAN.md §5 and §8.
 
 ## Layout
 ```

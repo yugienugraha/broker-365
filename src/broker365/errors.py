@@ -36,6 +36,11 @@ class GraphError(Broker365Error):
             message = err.get("message", message)
         except ValueError:
             pass
+        if resp.status_code == 423:
+            message = (
+                "the file is locked (open in Excel, or edited moments ago); try again in a "
+                f"minute or save under another name. ({message})"
+            )
         kind = ConflictError if resp.status_code == 412 else cls
         return kind(resp.status_code, code, message)
 

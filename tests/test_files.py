@@ -216,3 +216,56 @@ def test_explicitly_allowed_share_is_usable(monkeypatch):
     monkeypatch.setattr(config, "allowed_dirs", lambda: [config.workspace(), share])
     monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: self)  # no real SMB in tests
     assert config.resolve_local("\\\\nas\\team\\r.pdf") == share / "r.pdf"
+
+
+def test_mkdir_retries_transient_504(httpx_mock):
+    url = f"{G}/me/drive/root:/Projects:/children"
+    httpx_mock.add_response(method="POST", url=url, status_code=504)
+    httpx_mock.add_response(method="POST", url=url, json={**ITEM, "name": "2026", "folder": {}})
+    assert files.files_mkdir("/Projects/2026")["type"] == "folder"
+
+
+def test_mkdir_existing_folder_after_lost_response(httpx_mock):
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{G}/me/drive/root:/Projects:/children",
+        status_code=409,
+        json={"error": {"code": "nameAlreadyExists", "message": "exists"}},
+    )
+    httpx_mock.add_response(
+        url=f"{G}/me/drive/root:/Projects/2026:", json={**ITEM, "name": "2026", "folder": {}}
+    )
+    out = files.files_mkdir("/Projects/2026")
+    assert out["existed"] is True and out["type"] == "folder"
+
+
+def test_replace_waits_out_short_lock(httpx_mock):
+    url = f"{G}/me/drive/items/ABC!1/content"
+    httpx_mock.add_response(method="PUT", url=url, status_code=423, json={"error": {}})
+    httpx_mock.add_response(method="PUT", url=url, json=ITEM)
+    assert files.replace_bytes(ITEM, b"new")["id"] == "ABC!1"
+    assert all(r.headers["If-Match"] == '"etag-1"' for r in httpx_mock.get_requests())
+
+
+def test_upload_lock_that_persists_is_explained(httpx_mock, monkeypatch):
+    monkeypatch.setattr("broker365.graph.LOCK_WAIT", 0)
+    httpx_mock.add_response(
+        method="PUT",
+        url=f"{G}/me/drive/items/ABC!1/content",
+        status_code=423,
+        json={"error": {"code": "notAllowed", "message": "resource busy"}},
+    )
+    with pytest.raises(Exception, match="locked .open in Excel"):
+        files.replace_bytes(ITEM, b"new")
+
+
+def test_lock_wait_also_covers_moves(httpx_mock):
+    url = f"{G}/me/drive/items/ABC!1"
+    httpx_mock.add_response(method="PATCH", url=url, status_code=423, json={"error": {}})
+    httpx_mock.add_response(method="PATCH", url=url, json=ITEM)
+    assert files.files_move("ABC!1", new_name="b.txt")["id"] == "ABC!1"
+
+
+def test_mkdir_requires_absolute_path():
+    with pytest.raises(Exception, match="absolute"):
+        files.files_mkdir("Projects")

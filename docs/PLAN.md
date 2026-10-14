@@ -268,14 +268,16 @@ Device code over chat: since Hermes often runs as a gateway (Telegram/Discord) o
 | Personal accounts lack Teams/SharePoint/Planner, and Excel Workbook API support on them is unreliable | Detect account type (`tid == 9188040d-6c67-4c5b-b112-36a304b66dad`) and hide unsupported tools |
 
 ## 8. Milestones
-Status as of 2026-10-14. ✅ = implemented with mocked-Graph tests. Live-tenant verification is still pending until the publisher client ID exists.
+Status as of 2026-10-14. ✅ = implemented with mocked-Graph tests **and** smoke-tested live against a personal Microsoft account through the real app registration (`5b97899a-…`): OneDrive files, Excel, Word, PowerPoint, PDF conversion, calendar, To Do, mail (read-only) and OneNote, also through Hermes's own MCP client. Work/school-only features (SharePoint, free/busy, Teams links) are not yet tested live.
+
+**Live findings (personal account, Oct 2026):** the Excel Workbook API works on personal OneDrive, including `createSession`, which contradicts Microsoft's docs. Sessionless reads of a just-written workbook lag 3–6 s, so every Workbook tool call opens its own persistent session and closes it at the end, falling back to sessionless if `createSession` is refused. A cross-call session cache was tried and dropped: an open session keeps the file locked against overwrite (423) for its whole ~5 min lifetime. Any workbook write locks the file for about 20 s, so uploads (`create_bytes`/`replace_bytes`) retry a 423 for up to 60 s. The openpyxl fallback remains for accounts where the probe fails. Folder creation can return transient 504s; it is retried safely because `conflictBehavior=fail` makes it idempotent.
 1. ✅ **M0 Scaffold**
 2. ✅ **M1 Auth:** interactive and device-code login, start/complete split for chat (`account_login_*` tools), `status`, `logout`, `accounts --default`, encrypted cache. A live sign-in is still needed.
 3. ✅ **M2 OneDrive tools** in CLI and MCP, plus `broker365 hermes install`. Verified against Hermes's own MCP client (mcp 2.0.0) over stdio.
 4. ✅ **M3 Excel:** dual backend with a per-account probe. Live probe against a personal account is still pending.
 5. ✅ **M4 Word/PowerPoint:** python-docx/pptx round-trip with an eTag guard.
 6. ✅ **M5 Outlook/Calendar/Contacts/To Do, SharePoint, OneNote**, read-only mode and the `audit.log` of write operations.
-7. ⏳ **M6 Release:** create the Entra app and set `DEFAULT_CLIENT_ID`, publisher verification, PyPI, optional web UI.
+7. ⏳ **M6 Release:** ✅ Entra app created and `DEFAULT_CLIENT_ID` set. Still to do: publisher verification (needs an MPN ID; until then the consent screen says "unverified" and many work/school tenants block user consent), PyPI release, and an optional web UI.
 
 ## 9. Open questions for the owner
 - App display name / publisher domain for the consent screen?
