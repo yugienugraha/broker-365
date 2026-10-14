@@ -166,3 +166,53 @@ def test_move_by_id_skips_parent_lookup(httpx_mock):
     httpx_mock.add_response(method="PATCH", url=f"{G}/me/drive/items/ABC!1", json=ITEM)
     files.files_move("ABC!1", new_parent="PARENT!9")
     assert json.loads(httpx_mock.get_requests()[0].content)["parentReference"] == {"id": "PARENT!9"}
+
+
+REMOTE_PATHS = [
+    "\\\\evil.example\\share\\a.pdf",
+    "//evil.example/share/a",
+    "\\\\evil@80\\x\\y",
+    "\\\\?\\C:\\Windows\\win.ini",
+    "\\\\.\\pipe\\x",
+    "C:secret.txt",
+]
+
+
+@pytest.fixture
+def no_resolve(monkeypatch, tmp_path):
+    """Windows rules on any OS; fail loudly if anything resolves (touches) a path."""
+    from pathlib import Path
+
+    monkeypatch.setattr(config, "_WINDOWS", True)
+    monkeypatch.setattr(config, "allowed_dirs", lambda: [tmp_path / "ws"])
+
+    def boom(self, *a, **k):
+        raise AssertionError(f"resolve() must not run for {self}")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+
+
+@pytest.mark.parametrize("path", REMOTE_PATHS)
+def test_resolve_local_rejects_remote_paths_before_touching_them(path, no_resolve):
+    with pytest.raises(PathNotAllowed, match="UNC"):
+        config.resolve_local(path)
+
+
+def test_remote_rules_only_apply_on_windows(monkeypatch):
+    monkeypatch.setattr(config, "_WINDOWS", False)
+    assert not any(config._is_remote(p) for p in REMOTE_PATHS)
+
+
+def test_absolute_path_inside_workspace_still_allowed():
+    target = config.workspace() / "sub" / "a.pdf"
+    assert config.resolve_local(str(target)) == target
+
+
+@pytest.mark.skipif(config.os.name != "nt", reason="UNC paths are Windows-only")
+def test_explicitly_allowed_share_is_usable(monkeypatch):
+    from pathlib import Path
+
+    share = Path("\\\\nas\\team")
+    monkeypatch.setattr(config, "allowed_dirs", lambda: [config.workspace(), share])
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: self)  # no real SMB in tests
+    assert config.resolve_local("\\\\nas\\team\\r.pdf") == share / "r.pdf"

@@ -10,6 +10,17 @@ from broker365.errors import Broker365Error, PathNotAllowed
 from broker365.services import mail
 from tests.conftest import G
 
+
+def test_attachment_on_unc_share_rejected_without_contacting_it(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    monkeypatch.setattr(config, "_WINDOWS", True)
+    monkeypatch.setattr(config, "allowed_dirs", lambda: [tmp_path])
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: pytest.fail(f"resolved {self}"))
+    with pytest.raises(PathNotAllowed, match="UNC"):
+        mail.mail_send(["a@b.co"], "s", "b", attachments=["\\\\evil.example\\s\\a.pdf"])
+
+
 MSG = {
     "id": "AAMk/1=",
     "subject": "Hi",

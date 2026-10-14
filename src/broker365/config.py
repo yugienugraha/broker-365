@@ -6,7 +6,7 @@ import os
 import tempfile
 import threading
 import tomllib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import tomli_w
@@ -148,14 +148,34 @@ def resolve_local(path: str | None, default_name: str | None = None) -> Path:
         if not default_name:
             raise PathNotAllowed("A local path is required")
         path = default_name
+    roots = allowed_dirs()  # roots[0] is the workspace
     p = Path(path).expanduser()
-    if not p.is_absolute():
-        p = workspace() / p
+    if _is_remote(str(p)):
+        # resolve() on a UNC path makes Windows contact that host (sending NTLM credentials)
+        # before any allow-list check could reject it, so only a lexical check is safe here.
+        lexical = Path(os.path.normpath(p))
+        if not any(_is_remote(str(r)) and lexical.is_relative_to(r) for r in roots):
+            raise PathNotAllowed(f"UNC, device and drive-relative paths are not allowed: {p}")
+    elif not p.is_absolute():
+        p = roots[0] / p
     p = p.resolve()
-    roots = allowed_dirs()
     if any(p.is_relative_to(root) for root in roots):
         return p
     raise PathNotAllowed(
         f"Local path {p} is outside the allowed directories ({', '.join(map(str, roots))}). "
         "Add it to allowed_dirs in config.toml or BROKER365_ALLOWED_DIRS."
     )
+
+
+_WINDOWS = os.name == "nt"
+
+
+def _is_remote(path: str) -> bool:
+    r"""Windows UNC (\\host\share, //host/share), device (\\?\, \\.\) or drive-relative
+    ('C:foo') path. Always False elsewhere, where these are ordinary file names."""
+    if not _WINDOWS:
+        return False
+    if path[:1] in ("\\", "/") and path[1:2] in ("\\", "/"):
+        return True
+    w = PureWindowsPath(path)
+    return bool(w.drive) and not w.root
