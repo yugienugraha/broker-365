@@ -1,0 +1,47 @@
+[project]
+name = "broker365"
+version = "0.0.1"
+description = "Local credential broker + MCP server that connects AI agents (Hermes) to Microsoft 365 / OneDrive via Microsoft Graph — no Azure setup for end users."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "msal>=1.31",
+    "msal-extensions>=1.2",
+    "httpx>=0.27",
+    "typer>=0.12",
+    "mcp>=2.0,<3",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "tomli-w>=1.0",
+    "tzdata>=2024.1",  # IANA zones for zoneinfo on Windows
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-httpx>=0.30", "pyyaml>=6", "ruff>=0.6", "mypy>=1.10"]
+
+[project.scripts]
+broker365 = "broker365.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/broker365"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/broker365/cli.py" = ["B008"]  # typer.Option defaults are the idiomatic Typer pattern
+"tests/*" = ["S105", "S106"]
