@@ -277,7 +277,7 @@ Status as of 2026-10-14. ✅ = implemented with mocked-Graph tests **and** smoke
 4. ✅ **M3 Excel:** dual backend with a per-account probe. Live probe against a personal account is still pending.
 5. ✅ **M4 Word/PowerPoint:** python-docx/pptx round-trip with an eTag guard.
 6. ✅ **M5 Outlook/Calendar/Contacts/To Do, SharePoint, OneNote**, read-only mode and the `audit.log` of write operations.
-7. ⏳ **M6 Release:** ✅ Entra app created and `DEFAULT_CLIENT_ID` set. Still to do: publisher verification (needs an MPN ID; until then the consent screen says "unverified" and many work/school tenants block user consent), PyPI release, and an optional web UI.
+7. ⏳ **M6 Release:** ✅ Entra app created and `DEFAULT_CLIENT_ID` set. Distribution is **private** (owner's decision): install from the private GitHub repo, with no PyPI release. Deferred: publisher verification (needs an MPN ID; until then the consent screen says "unverified", which is fine for personal accounts), live work/school tenant testing, and an optional web UI.
 
 ## 9. Open questions for the owner
 - App display name / publisher domain for the consent screen?

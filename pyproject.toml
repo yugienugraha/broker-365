@@ -9,6 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Yugie Nugraha" }]
 keywords = ["microsoft-365", "microsoft-graph", "onedrive", "excel", "mcp", "hermes", "ai-agent"]
 classifiers = [
+    "Private :: Do Not Upload",  # PyPI rejects this: broker365 is distributed privately only
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",

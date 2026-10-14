@@ -9,11 +9,23 @@ Keychain on macOS, libsecret on Linux), otherwise in a mode-600 file. broker365 
 its own and only talks to `login.microsoftonline.com` and `graph.microsoft.com`.
 
 ## Install
+broker365 is **private**: it lives only in the private GitHub repo and is not published on
+PyPI. Each machine that installs it needs read access to the repo.
+
 ```bash
+# one-time per machine: sign in to GitHub (opens a browser / device code; works over SSH too)
+gh auth login
+gh auth setup-git          # lets git/pip use that login for https://github.com URLs
+
 pipx install git+https://github.com/yugienugraha/broker-365.git
-# or, for development:
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+# update later
+pipx upgrade broker365     # or: pipx install --force git+https://github.com/yugienugraha/broker-365.git
 ```
+
+Without the GitHub CLI, use an SSH key that has access to the repo:
+`pipx install git+ssh://git@github.com/yugienugraha/broker-365.git`
+
+For development: `python -m venv .venv && .venv/bin/pip install -e ".[dev]"`
 
 The public client ID of the `broker365` app registration is built in, so no Azure setup is
 needed. The consent screen shows the app as *unverified* until publisher verification is done.
