@@ -600,6 +600,12 @@ class GoogleProvider:
             _memo(key, body)
             return body["access_token"]
 
+    def has_consent(self, bundle: str, username: str | None = None) -> bool:
+        if bundle not in config.GOOGLE_SCOPE_BUNDLES:
+            return False
+        rec = _account(username)  # not signed in / no default: its own error, not consent
+        return bundle == "core" or bundle in _granted_bundles(rec.get("scopes", []))
+
     def invalidate_token(self, username: str | None = None) -> None:
         forget_token(username)
 

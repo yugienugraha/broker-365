@@ -521,3 +521,74 @@ def test_resumable_gives_up_after_bounded_failures(httpx_mock, monkeypatch, slee
         g().upload(b"0123456789", {"name": "x"}, "text/plain")
     assert sleeps == [1.0, 2.0, 4.0, 8.0]
     assert len([r for r in httpx_mock.get_requests() if r.method == "PUT"]) == gapi.MAX_RETRIES + 1
+
+
+@pytest.mark.parametrize(
+    "status, status_name, guarded, conflict",
+    [
+        (412, "", True, True),
+        (400, "FAILED_PRECONDITION", True, False),  # only the revision message counts
+        (400, "ABORTED", True, False),
+        (400, "FAILED_PRECONDITION", False, False),  # not opted in
+        (400, "INVALID_ARGUMENT", True, False),
+        (412, "", False, False),
+    ],
+)
+def test_guarded_requests_classify_conflicts(httpx_mock, status, status_name, guarded, conflict):
+    from broker365.errors import GoogleConflictError
+
+    body = {"error": {"code": status, "message": "m", "status": status_name}}
+    httpx_mock.add_response(method="POST", url=FILE_URL, status_code=status, json=body)
+    with pytest.raises(GoogleApiError) as exc:
+        g().post(FILE_URL, json={}, guarded=guarded)
+    assert isinstance(exc.value, GoogleConflictError) is conflict
+    assert isinstance(exc.value, ConflictError) is conflict
+
+
+def test_conflict_hierarchy_is_provider_neutral():
+    from broker365.errors import GoogleConflictError, GraphConflictError, GraphError
+
+    google_conflict = GoogleConflictError(400, "FAILED_PRECONDITION", "x")
+    assert isinstance(google_conflict, ConflictError) and isinstance(google_conflict, ApiError)
+    assert not isinstance(google_conflict, GraphError)
+    assert str(google_conflict).startswith("Google 400")
+    graph_412 = GraphError.from_response(
+        httpx.Response(412, json={"error": {"code": "resourceModified", "message": "changed"}})
+    )
+    assert isinstance(graph_412, GraphConflictError)
+    assert isinstance(graph_412, ConflictError) and isinstance(graph_412, GraphError)
+    assert not isinstance(graph_412, GoogleApiError)
+    assert str(graph_412) == "Graph 412 resourceModified: changed"
+
+
+@pytest.mark.parametrize("guarded", [True, False])
+def test_live_stale_revision_shape(httpx_mock, guarded):
+    """Docs' real answer to a stale requiredRevisionId (seen live, Oct 2026)."""
+    from broker365.errors import GoogleConflictError
+
+    body = {
+        "error": {
+            "code": 400,
+            "message": "The required revision ID 'ALm37BV' does not match the latest revision.",
+            "status": "INVALID_ARGUMENT",
+        }
+    }
+    httpx_mock.add_response(method="POST", url=FILE_URL, status_code=400, json=body)
+    with pytest.raises(GoogleApiError) as exc:
+        g().post(FILE_URL, json={}, guarded=guarded)
+    assert isinstance(exc.value, GoogleConflictError) is guarded
+
+
+def test_guarded_failed_precondition_keeps_googles_text(httpx_mock):
+    body = {
+        "error": {
+            "code": 400,
+            "message": "Precondition check failed.",
+            "status": "FAILED_PRECONDITION",
+        }
+    }
+    httpx_mock.add_response(method="POST", url=FILE_URL, status_code=400, json=body)
+    with pytest.raises(GoogleApiError) as exc:
+        g().post(FILE_URL, json={}, guarded=True)
+    assert not isinstance(exc.value, ConflictError)
+    assert str(exc.value) == "Google 400 FAILED_PRECONDITION: Precondition check failed."

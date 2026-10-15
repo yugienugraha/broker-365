@@ -26,6 +26,7 @@ from broker365 import auth, config, graph
 from broker365.errors import Broker365Error, GraphError
 from broker365.graph import item_ref
 from broker365.services import files, tool
+from broker365.services._shapes import check_2d
 
 WORKBOOK, OPENPYXL = "workbook", "openpyxl"
 EXCEL_EXTS = (".xlsx", ".xlsm")
@@ -94,12 +95,7 @@ def _strip_sheet(address: str) -> str:
 
 
 def _check_values(values: Any, area: Area | None = None) -> list[list[Any]]:
-    if not isinstance(values, list) or not values or not all(isinstance(r, list) for r in values):
-        raise Broker365Error("values must be a non-empty 2-D array (a list of rows)")
-    for row in values:
-        for v in row:
-            if v is not None and not isinstance(v, str | int | float | bool):
-                raise Broker365Error("Cell values must be strings, numbers, booleans or null")
+    check_2d(values)
     if area is not None:
         widths = {len(r) for r in values}
         if len(values) != area.rows or widths != {area.cols}:

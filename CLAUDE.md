@@ -37,7 +37,11 @@ src/broker365/
   gapi.py         httpx Google API client: exact *.googleapis.com host allow-list, 401 refresh-once,
                   rate-limit/5xx retries, nextPageToken paging, multipart/resumable Drive uploads
   services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote,
-                  gdrive (Google Drive: @tool("gdrive", "google"), items by Drive id or path)
+                  gdrive (Google Drive: @tool("gdrive", "google"), items by Drive id or path),
+                  gsheets / gdocs / gslides (Sheets v4, Docs v1, Slides v1; files found and
+                  created through gdrive's public helpers; _gnative.Native = per-product
+                  client/url/resolve/revision-guarded update). @tool(requires=...) = other
+                  bundles checked with Provider.has_consent before the tool runs
   cli.py          Typer app, entry point `broker365`
   mcp_server.py   MCP stdio server (`broker365 mcp`)
   audit.py        JSON-lines audit.log of write tools and admin:* actions (targets only, never content;

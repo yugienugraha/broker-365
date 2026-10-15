@@ -35,6 +35,7 @@ def isolated(tmp_path, monkeypatch, httpx_mock):
     # Google API calls get a fake token without touching the Google provider's store (its own
     # tests exercise GoogleProvider.get_token directly).
     monkeypatch.setattr(gapi.GoogleClient, "_token", lambda self: "g-token")
+    monkeypatch.setattr(google.GoogleProvider, "has_consent", lambda self, b, u=None: True)
     monkeypatch.setattr(transport, "_sleep", lambda s: None)
     monkeypatch.setattr(webbrowser, "open", lambda *a, **k: False)  # never a real browser
     monkeypatch.setattr(google, "INTERACTIVE_TIMEOUT", 5)

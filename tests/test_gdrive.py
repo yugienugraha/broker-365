@@ -110,8 +110,16 @@ def drive(httpx_mock):
     return d
 
 
-def sent(httpx_mock, method):
-    return [r for r in httpx_mock.get_requests() if r.method == method]
+def at(method, prefix):
+    """httpx_mock matcher for `method` on any URL starting with `prefix`."""
+    return {"method": method, "url": re.compile(re.escape(prefix) + r".*")}
+
+
+def sent(httpx_mock, method, prefix=""):
+    """Requests sent with `method` to URLs starting with `prefix`."""
+    return [
+        r for r in httpx_mock.get_requests() if r.method == method and str(r.url).startswith(prefix)
+    ]
 
 
 # ---- addressing -------------------------------------------------------------------------

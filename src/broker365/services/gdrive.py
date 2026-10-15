@@ -207,8 +207,9 @@ def _split(path: str) -> list[str]:
     return [p for p in path.split("/") if p]
 
 
-def resolve(item: str) -> dict[str, Any]:
-    """Metadata of a file or folder given a Drive file id or an absolute path."""
+def resolve(item: str, fields: str = FIELDS) -> dict[str, Any]:
+    """Metadata of a file or folder given a Drive file id or an absolute path. `fields`
+    trims what a path lookup returns (ids always get FIELDS)."""
     if not item:
         raise Broker365Error("A Drive file id or absolute path is required")
     if not item.startswith("/"):
@@ -219,10 +220,10 @@ def resolve(item: str) -> dict[str, Any]:
     parent: dict[str, Any] = {"id": "root"}  # My Drive's alias: no lookup to start the walk
     for i, name in enumerate(parts[:-1]):
         parent = _one(_children(parent, name, folders_only=True), "/" + "/".join(parts[: i + 1]))
-    return _one(_children(parent, parts[-1], fields=FIELDS, limit=10), "/" + "/".join(parts))
+    return _one(_children(parent, parts[-1], fields=fields, limit=10), "/" + "/".join(parts))
 
 
-def _folder(item: str) -> dict[str, Any]:
+def folder(item: str) -> dict[str, Any]:
     meta = resolve(item)
     if meta.get("mimeType") != FOLDER:
         raise Broker365Error(f"'{item}' is not a folder")
@@ -241,7 +242,7 @@ def _parent_and_leaf(path: str, example: str) -> tuple[dict[str, Any], str]:
     parts = _split(path)
     if not parts:
         raise Broker365Error(f"Give a path below '/', e.g. {example}")
-    return _folder("/" + "/".join(parts[:-1])), parts[-1]
+    return folder("/" + "/".join(parts[:-1])), parts[-1]
 
 
 def _local_name(name: str | None, fallback: str = "download") -> str:
@@ -306,43 +307,90 @@ def _free_name(parent: dict[str, Any], name: str) -> str:
     return f"{stem} ({n}){ext}"
 
 
-def _put(
+CONFLICTS = ("fail", "replace", "rename")
+
+
+def folder_ref(item: str) -> dict[str, Any]:
+    """A folder to create in: My Drive's root alias without a lookup, else folder(item)."""
+    return {"id": "root"} if item.strip() in ("", "/") else folder(item)
+
+
+def claim_name(
+    parent: dict[str, Any], name: str, conflict: str, allowed: tuple[str, ...] = CONFLICTS
+) -> tuple[dict[str, Any] | None, str]:
+    """Apply `conflict` to a new item `name` in folder `parent`: (existing file to replace or
+    None, name to use). 'fail' raises when the name is taken, 'rename' picks 'name (n).ext'."""
+    if conflict not in allowed:
+        quoted = [f"'{a}'" for a in allowed]
+        raise Broker365Error(f"conflict must be {', '.join(quoted[:-1])} or {quoted[-1]}")
+    if not name or "/" in name:
+        raise Broker365Error("A file name without '/' is required")
+    existing = _children(parent, name)
+    if not existing:
+        return None, name
+    if conflict == "fail":
+        ids = ", ".join(e["id"] for e in existing)
+        how = (
+            "Pass conflict='replace' to overwrite it or 'rename' to keep both."
+            if "replace" in allowed
+            else "Pick another name or pass conflict='rename' to keep both."
+        )
+        raise Broker365Error(f"'{name}' already exists in that folder (id {ids}). {how}")
+    if conflict == "replace":
+        target = _one(existing, name)
+        if target.get("mimeType") == FOLDER:
+            raise Broker365Error(f"'{name}' is a folder; it can't be replaced by a file")
+        return target, name
+    return None, _free_name(parent, name)
+
+
+def put(
     parent: dict[str, Any],
     name: str,
     data: bytes | Path,
     mime: str,
     conflict: str,
     target_mime: str | None = None,
+    allowed: tuple[str, ...] = CONFLICTS,
 ) -> dict[str, Any]:
-    """Create `name` in folder `parent`, or apply `conflict` if that name is taken."""
-    if conflict not in ("fail", "replace", "rename"):
-        raise Broker365Error("conflict must be 'fail', 'replace' or 'rename'")
-    if not name or "/" in name:
-        raise Broker365Error("A file name without '/' is required")
-    existing = _children(parent, name)
-    if existing and conflict == "fail":
-        ids = ", ".join(e["id"] for e in existing)
-        raise Broker365Error(
-            f"'{name}' already exists in that folder (id {ids}). "
-            "Pass conflict='replace' to overwrite it or 'rename' to keep both."
-        )
-    if existing and conflict == "replace" and target_mime:
+    """Upload `name` into folder `parent` (converted to `target_mime` when given), applying
+    `conflict` if that name is taken."""
+    target, name = claim_name(parent, name, conflict, allowed)
+    if target and target_mime:
         raise Broker365Error(
             f"'{name}' exists, and a file can't be replaced while converting it. Use "
             "conflict='rename', or move the old one to the trash first (gdrive_trash)."
         )
-    if existing and conflict == "replace":
-        target = _one(existing, name)
-        if target.get("mimeType") == FOLDER:
-            raise Broker365Error(f"'{name}' is a folder; it can't be replaced by a file")
+    if target:
         out = _g().upload(data, {}, mime, file_id=target["id"], params=ITEM_PARAMS)
         return {**summarize(out), "replaced": True}
-    if existing:  # rename
-        name = _free_name(parent, name)
     metadata: dict[str, Any] = {"name": name, "parents": [parent["id"]]}
     if target_mime:
         metadata["mimeType"] = target_mime
     return summarize(_g().upload(data, metadata, mime, params=ITEM_PARAMS))
+
+
+def create(parent: dict[str, Any], name: str, mime: str, conflict: str = "fail") -> dict:
+    """Create an empty item (e.g. a native Google file) in folder `parent`."""
+    _, name = claim_name(parent, name, conflict, ("fail", "rename"))
+    body = {"name": name, "mimeType": mime, "parents": [parent["id"]]}
+    return summarize(_g().post(f"{gapi.DRIVE}/files", json=body, params=ITEM_PARAMS))
+
+
+def trash(file_id: str) -> dict[str, Any]:
+    """Move a file to the trash (restorable; broker365 never deletes permanently)."""
+    url = _file_url(file_id)
+    return summarize(_g().patch(url, json={"trashed": True}, params=ITEM_PARAMS, idempotent=True))
+
+
+def copy(file_id: str, parent: dict[str, Any] | None = None, name: str | None = None) -> dict:
+    """Copy a file (Drive's default: same folder, 'Copy of …')."""
+    body: dict[str, Any] = {}
+    if name:
+        body["name"] = name
+    if parent:
+        body["parents"] = [parent["id"]]
+    return summarize(_g().post(f"{_file_url(file_id)}/copy", json=body, params=ITEM_PARAMS))
 
 
 # ---- tools ------------------------------------------------------------------------------
@@ -354,11 +402,11 @@ def gdrive_list(
 ) -> list[dict[str, Any]]:
     """List a Google Drive folder. `path`: absolute path ('/' = My Drive, '/Reports') or a
     folder id. Folders first, then by name."""
-    folder = _folder(path)
-    q = f"'{_q(folder['id'])}' in parents"
+    parent = folder(path)
+    q = f"'{_q(parent['id'])}' in parents"
     if not include_trashed:
         q += " and trashed = false"
-    return [summarize(f) for f in _in_folder(folder, q, limit, orderBy="folder,name")]
+    return [summarize(f) for f in _in_folder(parent, q, limit, orderBy="folder,name")]
 
 
 @tool(BUNDLE, GOOGLE)
@@ -501,19 +549,18 @@ def gdrive_upload(
             raise Broker365Error(f"convert=true supports {', '.join(CONVERT)} files")
     if name is None:
         name = src.stem if convert else src.name
-    folder = _folder(remote_folder)
-    return _put(folder, name, src, _upload_mime(src.name), conflict, target_mime)
+    return put(folder(remote_folder), name, src, _upload_mime(src.name), conflict, target_mime)
 
 
 @tool(BUNDLE, GOOGLE, writes=True, audit=("conflict",))
 def gdrive_write_text(remote_path: str, text: str, conflict: Conflict = "fail") -> dict[str, Any]:
     """Create a text file (txt, md, csv, json, …) at an absolute Drive path from a string.
     conflict: 'fail', 'replace' or 'rename', as for gdrive_upload."""
-    folder, name = _parent_and_leaf(remote_path, "/Notes/todo.md")
+    parent, name = _parent_and_leaf(remote_path, "/Notes/todo.md")
     mime = _upload_mime(name)
     if not mime.startswith("text/") and mime not in TEXT_MIMES:
         mime = "text/plain"
-    return _put(folder, name, text.encode("utf-8"), mime, conflict)
+    return put(parent, name, text.encode("utf-8"), mime, conflict)
 
 
 @tool(BUNDLE, GOOGLE, writes=True)
@@ -537,7 +584,7 @@ def gdrive_move(
     meta = resolve(item)
     params: dict[str, Any] = dict(ITEM_PARAMS)
     if new_parent:
-        dest = _folder(new_parent)
+        dest = folder(new_parent)
         params["addParents"] = dest["id"]
         if old := [p for p in meta.get("parents") or [] if p != dest["id"]]:
             params["removeParents"] = ",".join(old)
@@ -553,20 +600,14 @@ def gdrive_copy(
     """Copy a Drive file (not a folder) into `new_parent` (path or id; default: same folder),
     optionally under `new_name` (default: Google's 'Copy of …')."""
     meta = _file(item)
-    body: dict[str, Any] = {}
-    if new_name:
-        body["name"] = new_name
-    if new_parent:
-        body["parents"] = [_folder(new_parent)["id"]]
-    return summarize(_g().post(f"{_file_url(meta['id'])}/copy", json=body, params=ITEM_PARAMS))
+    return copy(meta["id"], folder(new_parent) if new_parent else None, new_name)
 
 
 @tool(BUNDLE, GOOGLE, destructive=True)
 def gdrive_trash(item: str) -> dict[str, Any]:
     """Move a Drive file or folder to the trash (restorable for 30 days; never deleted
     permanently by broker365)."""
-    url = _file_url(resolve(item)["id"])
-    return summarize(_g().patch(url, json={"trashed": True}, params=ITEM_PARAMS, idempotent=True))
+    return trash(resolve(item)["id"])
 
 
 @tool(BUNDLE, GOOGLE, destructive=True, audit=("email", "role", "type", "domain"))

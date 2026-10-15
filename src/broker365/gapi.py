@@ -11,6 +11,7 @@ graph.fetch. Transport failures surface as NetworkError. Nothing here logs token
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -25,6 +26,7 @@ from broker365.errors import (
     Broker365Error,
     ConsentRequired,
     GoogleApiError,
+    GoogleConflictError,
     NetworkError,
     ReauthRequired,
 )
@@ -49,6 +51,11 @@ DRIVE_UPLOAD = f"{BASE}/upload/drive/v3/files"
 SERVER_ERRORS = {500, 502, 503, 504}
 RATE_REASONS = {"rateLimitExceeded", "userRateLimitExceeded"}
 SCOPE_REASONS = {"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}
+# A guarded write (If-Match / requiredRevisionId) that lost the race: a 412, or a 400 with
+# this message. Seen live (Docs, Oct 2026): a stale writeControl.requiredRevisionId comes back
+# as HTTP 400, status INVALID_ARGUMENT, "The required revision ID '<id>' does not match the
+# latest revision." Other FAILED_PRECONDITION/ABORTED answers are not conflicts.
+_STALE_REVISION = re.compile(r"required revision id .* does not match", re.IGNORECASE)
 MAX_REDIRECTS = 5
 PAGE_MAX = 1000  # Drive's largest pageSize
 MULTIPART_MAX = 5 * 1024 * 1024  # larger uploads go through a resumable session
@@ -68,8 +75,8 @@ def check_url(url: str) -> str:
     return url
 
 
-def _error_info(resp: httpx.Response) -> tuple[str, set[str], str]:
-    """(code, reasons, message) from a Google error body. `reasons` holds every
+def _error_info(resp: httpx.Response) -> tuple[str, set[str], str, str]:
+    """(code, reasons, message, status) from a Google error body. `reasons` holds every
     error.errors[].reason and error.details[].reason (or an OAuth-style string error) for
     membership checks; `code` is the first errors[] reason, else the first details[] reason,
     else error.status."""
@@ -89,7 +96,7 @@ def _error_info(resp: httpx.Response) -> tuple[str, set[str], str]:
     elif isinstance(err, str):  # OAuth-style {"error": "invalid_token", ...}
         ordered.append(err)
     code = ordered[0] if ordered else (status or "error")
-    return code, set(ordered), (message.splitlines() or ["error"])[0][:500]
+    return code, set(ordered), (message.splitlines() or ["error"])[0][:500], status
 
 
 def _token_rejected(resp: httpx.Response) -> bool:
@@ -100,11 +107,16 @@ def _token_rejected(resp: httpx.Response) -> bool:
     return resp.status_code == 403 and bool(_error_info(resp)[1] & SCOPE_REASONS)
 
 
-def api_error(resp: httpx.Response, bundle: str | None = None) -> Broker365Error:
+def api_error(
+    resp: httpx.Response, bundle: str | None = None, guarded: bool = False
+) -> Broker365Error:
     """The Broker365Error for an error answer. `bundle` turns a missing-scope 403 into
-    ConsentRequired for that bundle."""
-    code, reasons, message = _error_info(resp)
+    ConsentRequired for that bundle; `guarded` (the request carried a revision/eTag
+    precondition) turns a failed precondition into GoogleConflictError."""
+    code, reasons, message, _ = _error_info(resp)
     status = resp.status_code
+    if guarded and (status == 412 or (status == 400 and _STALE_REVISION.search(message))):
+        return GoogleConflictError(status, code, message)
     if status == 401:
         return ReauthRequired(f"Google rejected the sign-in for this account. {LOGIN_HINT}")
     if status == 403 and bundle and reasons & SCOPE_REASONS:
@@ -231,12 +243,14 @@ class GoogleClient(transport.JsonVerbs):
         idempotent: bool = False,
         stream: bool = False,
         server_retries: bool = True,
+        guarded: bool = False,
         **kw: Any,
     ) -> httpx.Response:
         """One API call. A 401 or missing-scope 403 drops the memoized access token and
         retries once with a fresh one (the request was not processed); errors become
-        Broker365Error subclasses. 3xx answers are returned as they are (never followed with
-        the token)."""
+        Broker365Error subclasses. `guarded`: the request carries a precondition (revision id),
+        so a failed one is a GoogleConflictError. 3xx answers are returned as they are (never
+        followed with the token)."""
         url = check_url(url)
         for attempt in range(2):
             hdrs = {**(headers or {}), "Authorization": f"Bearer {self._token()}"}
@@ -254,7 +268,7 @@ class GoogleClient(transport.JsonVerbs):
             resp.close()
             providers.get(config.GOOGLE).invalidate_token(self.username)
         if resp.is_error:
-            raise api_error(resp, self.bundle)
+            raise api_error(resp, self.bundle, guarded)
         return resp
 
     def paged(

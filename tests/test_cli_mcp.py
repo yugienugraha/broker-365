@@ -89,6 +89,7 @@ def test_tools_catalog_matches_cli_and_flags_hidden(monkeypatch):
         "name": "files_delete",
         "provider": "microsoft",
         "bundle": "files",
+        "requires": [],
         "writes": True,
         "destructive": True,
         "description": catalog["files_delete"]["description"],

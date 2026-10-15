@@ -244,7 +244,7 @@ def test_tools_flags_hidden_in_read_only(authed, monkeypatch):
     assert tools["files_delete"]["hidden"] and not tools["files_list"]["hidden"]
     assert "\n" not in tools["files_list"]["description"]
     assert set(tools["files_list"]) == {
-        "name", "provider", "bundle", "writes", "destructive", "description", "hidden"
+        "name", "provider", "bundle", "requires", "writes", "destructive", "description", "hidden"
     }  # fmt: skip
 
 

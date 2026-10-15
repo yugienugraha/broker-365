@@ -862,3 +862,27 @@ def test_cli_default_scopes_and_browser_path(monkeypatch):
     assert started["kind"] == "authorize_url" and started["needs_redirect_url"] is True
     scope = parse_qs(urlsplit(started["authorize_url"]).query)["scope"][0]
     assert scope == f"openid email profile {G}drive {G}spreadsheets {G}documents"
+
+
+REAL_HAS_CONSENT = google.GoogleProvider.__dict__["has_consent"]  # conftest stubs it
+
+
+def test_has_consent_reads_granted_bundles_without_network(httpx_mock):
+    with pytest.raises(ReauthRequired):  # not signed in: its own error, not "no consent"
+        REAL_HAS_CONSENT(GP, "gdrive")
+    sign_in(httpx_mock)
+    requests_before = len(httpx_mock.get_requests())
+    assert REAL_HAS_CONSENT(GP, "gdrive") and REAL_HAS_CONSENT(GP, "core")
+    assert not REAL_HAS_CONSENT(GP, "gmail")
+    assert not REAL_HAS_CONSENT(GP, "files")  # a Microsoft bundle
+    assert len(httpx_mock.get_requests()) == requests_before
+    with pytest.raises(ReauthRequired, match="someone@else.com"):
+        REAL_HAS_CONSENT(GP, "gdrive", "someone@else.com")
+
+
+def test_tool_precheck_reports_sign_in_not_consent(monkeypatch):
+    from broker365 import services
+
+    monkeypatch.setattr(google.GoogleProvider, "has_consent", REAL_HAS_CONSENT)
+    with pytest.raises(ReauthRequired):
+        services.call("gdocs_create", title="T")

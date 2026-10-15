@@ -52,7 +52,7 @@ def seg(value: str | None, what: str = "id") -> str:
 
 
 class JsonVerbs:
-    """get/post/patch over the subclass's `request(method, url, **kw) -> httpx.Response`,
+    """get/post/patch/put over the subclass's `request(method, url, **kw) -> httpx.Response`,
     returning the decoded JSON body (None for 204 / empty bodies)."""
 
     def request(self, method: str, url: str, **kw: Any) -> httpx.Response:
@@ -72,3 +72,6 @@ class JsonVerbs:
 
     def patch(self, url: str, json: Any = None, **kw: Any) -> Any:
         return self._json("PATCH", url, json=json, **kw)
+
+    def put(self, url: str, json: Any = None, **kw: Any) -> Any:
+        return self._json("PUT", url, json=json, **kw)

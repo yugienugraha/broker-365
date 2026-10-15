@@ -1,4 +1,5 @@
-"""Shared Microsoft Graph resource shapes: email addresses, recipients, dateTimeTimeZone."""
+"""Shared resource shapes: email addresses, recipients, dateTimeTimeZone (Graph) and 2-D cell
+value arrays (Excel and Google Sheets)."""
 
 from __future__ import annotations
 
@@ -52,3 +53,14 @@ def date_time(obj: dict[str, Any], key: str) -> str | None:
 def compact(fields: dict[str, Any]) -> dict[str, Any]:
     """Drop the None values (fields that weren't given)."""
     return {k: v for k, v in fields.items() if v is not None}
+
+
+def check_2d(values: Any) -> list[list[Any]]:
+    """`values` if it is a non-empty 2-D list of scalar cells (str, number, bool or null)."""
+    if not isinstance(values, list) or not values or not all(isinstance(r, list) for r in values):
+        raise Broker365Error("values must be a non-empty 2-D array (a list of rows)")
+    for row in values:
+        for v in row:
+            if v is not None and not isinstance(v, str | int | float | bool):
+                raise Broker365Error("Cell values must be strings, numbers, booleans or null")
+    return values

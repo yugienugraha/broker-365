@@ -79,6 +79,24 @@ Terminal alternative: `broker365 login --provider google`.
   `type="anyone"` means anyone with the link. An address without a Google account can only
   be shared with `notify=true` (Google emails them).
 
+## Google Sheets, Docs and Slides (scopes `gsheets`, `gdocs`, `gslides`)
+- Files are addressed like Drive items (id or path). Office files in Drive must first be
+  converted (`gdrive_upload` with `convert=true`); OneDrive files use the excel/word/ppt tools.
+- **Sheets:** `gsheets_create` (in a Drive folder; optional `tabs` and initial `values`),
+  `gsheets_list_tabs`, `gsheets_add_tab`, `gsheets_read_range` (`render`: FORMATTED_VALUE,
+  UNFORMATTED_VALUE or FORMULA), `gsheets_write_range` (strings are typed as in the UI, so
+  `=SUM(A1:A3)` is a formula; `raw=true` stores text literally), `gsheets_append_rows`,
+  `gsheets_clear_range` (destructive). Ranges: `A1:C10`, `Tab name!A1:B2` (quoting is done
+  for you) or just a tab name.
+- **Docs:** `gdocs_create` from Markdown (headings, bold, lists survive), `gdocs_read` (text
+  with `#` headings, `- `/`1.` lists, tab-separated tables, plus `revisionId`), `gdocs_append`
+  (plain text at the end), `gdocs_replace_text`, `gdocs_fill_template` (`{{key}}` placeholders;
+  `copy_to` fills a copy and keeps the template; reports keys that matched nothing).
+- **Slides:** `gslides_create` from an outline (`[{"title", "body"} or {"title", "bullets"}]`),
+  `gslides_read`, `gslides_add_slide`, `gslides_replace_text`.
+- Pass the `revisionId` from a read as `revision_id` to the replace tools: if someone edited
+  the file meanwhile you get a conflict and nothing changes. Re-read and retry.
+
 ## SharePoint and OneNote
 - SharePoint (work/school accounts only, scope `sharepoint`): `sharepoint_sites`,
   `sharepoint_drives`, `sharepoint_list`, `sharepoint_download`, `sharepoint_upload`. Site ids

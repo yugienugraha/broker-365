@@ -44,6 +44,13 @@ class Provider(Protocol):
 
     def get_token(self, bundle: str, username: str | None = None) -> str: ...
 
+    def has_consent(self, bundle: str, username: str | None = None) -> bool:
+        """Whether `username` (default account when None) has granted `bundle`, without
+        network calls: False only for a bundle that isn't granted (or unknown). When the
+        account can't be resolved (not signed in, no default among several) the provider's
+        ReauthRequired / Broker365Error is raised as is."""
+        ...
+
     def invalidate_token(self, username: str | None = None) -> None:
         """Make the next get_token for `username` (the account get_token would pick when
         None) return a freshly issued access token instead of any cached one, e.g. after an

@@ -34,6 +34,10 @@ class MicrosoftProvider:
     def get_token(self, bundle: str, username: str | None = None) -> str:
         return auth.get_token(bundle, username)
 
+    def has_consent(self, bundle: str, username: str | None = None) -> bool:
+        # MSAL only tells by trying (get_token raises ConsentRequired), so don't pre-empt it.
+        return True
+
     def invalidate_token(self, username: str | None = None) -> None:
         auth.forget_tokens(username)
 

@@ -38,6 +38,11 @@ class ApiError(Broker365Error):
         super().__init__(f"{self.service} {status} {code}: {message}")
 
 
+class ConflictError(ApiError):
+    """The file changed since it was read (eTag or revision mismatch); nothing was written.
+    Provider-neutral: catch this for either provider's conflict."""
+
+
 class GraphError(ApiError):
     service = "Graph"
 
@@ -55,18 +60,23 @@ class GraphError(ApiError):
                 "the file is locked (open in Excel, or edited moments ago); try again in a "
                 f"minute or save under another name. ({message})"
             )
-        kind = ConflictError if resp.status_code == 412 else cls
+        kind = GraphConflictError if resp.status_code == 412 else cls
         return kind(resp.status_code, code, message)
 
 
-class ConflictError(GraphError):
-    """The file changed since it was read (eTag mismatch); nothing was overwritten."""
+class GraphConflictError(GraphError, ConflictError):
+    """412 from Graph: the eTag no longer matches; nothing was overwritten."""
 
 
 class GoogleApiError(ApiError):
     """An error answer from a Google API (status, reason, Google's message)."""
 
     service = "Google"
+
+
+class GoogleConflictError(GoogleApiError, ConflictError):
+    """A guarded Google write (required revision) found the file changed; nothing was
+    written."""
 
 
 class NetworkError(Broker365Error):

@@ -115,6 +115,9 @@ broker365 call word_create '{"remote_path": "/Notes.docx", "markdown": "# Hello\
 ### Google tools
 | Area | Tools | Notes |
 |---|---|---|
+| Google Sheets (`gsheets`) | `gsheets_create`, `gsheets_list_tabs`, `gsheets_add_tab`, `gsheets_read_range`, `gsheets_write_range`, `gsheets_append_rows`, `gsheets_clear_range` | Live edits through the Sheets API; formulas work (`USER_ENTERED`); clearing is destructive |
+| Google Docs (`gdocs`) | `gdocs_create`, `gdocs_read`, `gdocs_append`, `gdocs_replace_text`, `gdocs_fill_template` | Create from Markdown; `{{key}}` templates; revision-guarded replace |
+| Google Slides (`gslides`) | `gslides_create`, `gslides_read`, `gslides_add_slide`, `gslides_replace_text` | Decks from an outline (title + body or bullets) |
 | Google Drive (`gdrive`) | `gdrive_list`, `gdrive_search`, `gdrive_get`, `gdrive_read_text`, `gdrive_download`, `gdrive_export`, `gdrive_upload`, `gdrive_write_text`, `gdrive_mkdir`, `gdrive_move`, `gdrive_copy`, `gdrive_trash`, `gdrive_share` | Items by file id or path (`/Reports/q3.pdf`). Docs/Sheets/Slides are read with `gdrive_read_text` or exported (pdf, docx, xlsx, pptx, …). Trash only, never a permanent delete; `gdrive_share` and `gdrive_trash` are destructive |
 
 The design rationale is in [docs/PLAN.md](docs/PLAN.md).

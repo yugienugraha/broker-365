@@ -5,8 +5,9 @@
 > signs in, tokens stay local, and Hermes gets tools through the same MCP server, CLI and
 > dashboard.
 >
-> Status: G0–G2 done (2026-10-15): sign-in, token storage/refresh and revoke. G3 (Drive tools)
-> implemented with mocked tests; live smoke pending.
+> Status: G0–G3 done (2026-10-15): sign-in, token storage/refresh and revoke, Drive tools
+> (live smoke passed). G4 (Sheets, Docs, Slides) implemented with mocked tests; live smoke
+> pending.
 > Facts below were checked against Google's current docs via
 > Context7 (Identity OAuth 2.0, Drive, Gmail and Sheets API docs, google-auth-library-python).
 
@@ -150,7 +151,7 @@ Safety rules carry over unchanged:
 | G1 ✅ | `providers/` abstraction; Microsoft moved behind it with **no behaviour change**; per-provider default account + settings migration | Done 2026-10-15: `providers/` registry + Microsoft adapter, `default_accounts` (legacy key migrated on next write), `provider` on accounts/flows/tools/audit/CLI/dashboard; existing 201 tests pass (assertions only gained `provider` / `default_accounts`) |
 | G2 ✅ (code) | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart. Implemented 2026-10-15, see §8a; live sign-in still to be checked by the owner |
 | G3 ✅ | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export. Done 2026-10-15, live-verified on a personal Gmail account, see §8b |
-| G4 | Sheets, Docs, Slides tools (native batchUpdate) | Live smoke: create sheet, write formulas, read back computed values; doc from Markdown; slides from outline |
+| G4 ✅ (code) | Sheets, Docs, Slides tools (native batchUpdate) | Live smoke: create sheet, write formulas, read back computed values; doc from Markdown; slides from outline. Implemented 2026-10-15 with mocked tests, see §8c; live smoke pending |
 | G5 | Gmail, Calendar, Tasks, Contacts | Live smoke (read-only on real mail; draft-only send test) |
 | G6 | Dashboard provider tabs, Hermes skill + MCP instructions update, docs | Browser test of both providers; `hermes install` registers one server exposing both |
 
@@ -240,6 +241,65 @@ Safety rules carry over unchanged:
   `name` collided with `services.call(name, ...)` (now positional-only).
 - Not verified live: `gdrive_share` (it shares with real people), `corpora=allDrives` on a
   Workspace account with shared drives, `replace` onto a native file.
+
+## 8c. G4 result (2026-10-15; live smoke: Sheets and Docs 31/31, Slides awaiting consent)
+- `services/gsheets.py` (Sheets v4), `gdocs.py` (Docs v1), `gslides.py` (Slides v1). Each has
+  one `_gnative.Native` descriptor (bundle, API base URL, Drive mimeType, name, Microsoft
+  alternative) giving `client()`, `url()`, `resolve()`, `update()` (revision-guarded
+  batchUpdate → (replies, new revision)) and `replace_all()`. gdrive's public helpers
+  (`folder`, `folder_ref`, `claim_name`, `put`, `create`, `copy`) do the Drive side.
+- Items: a **path** is looked up in Drive (minimal fields) and must be the native type; a bare
+  **id** goes straight to the product API, whose 404 / "not supported for this document" 400
+  is explained with the convert-or-use-Microsoft hint (no Drive call, no gdrive needed).
+- Creation goes through Drive (`files.create` with the native mimeType; `/` is the `root` alias
+  without a lookup; conflict `fail`/`rename` on the title, same wording as gdrive).
+  `gdocs_create` uploads the Markdown with conversion through `gdrive.put`.
+  `gsheets_create` uses the Sheets API create (My Drive root) when the folder is `/` and
+  `has_consent("gdrive")` is false (it then can't check for duplicate titles and says so in a
+  `note`); with tabs it renames sheetId 0 and adds the others in one batchUpdate with
+  `includeSpreadsheetInResponse` (no extra GETs).
+- Consent pre-checks: `services.require_consent(provider, bundles)` raises ConsentRequired for
+  the first bundle `Provider.has_consent` says isn't granted. `services.call` runs it for a
+  tool's static `@tool(..., requires=(...))` (gdocs_create, gslides_create: gdrive); tools with
+  argument-dependent needs call it themselves (gsheets_create: gsheets; gdocs_fill_template:
+  gdrive only with `copy_to` or a path). `has_consent` returns False only for a missing scope;
+  an unresolvable account (not signed in, no default) raises its own ReauthRequired /
+  Broker365Error. The catalog and dashboard show `requires`.
+- Sheets: A1 ranges are parsed with quoting: a leading quote runs to its closing quote (`''`
+  escapes), and only then is `!` split (`'Q1!Sales'` = that whole tab, `'Q1!Sales'!A1` = a
+  cell on it). Tab names are quoted when needed. A bare non-cell value is a tab name; a bare
+  cell-like value (`Q1`, `FY24`; a lone column like `Log` doesn't count) is a tab of exactly
+  that name if one exists (one titles lookup), else cells on the first tab. Values must be a
+  2-D list of scalars (null → empty); `USER_ENTERED` unless `raw`; append uses `INSERT_ROWS`;
+  clear is destructive.
+- Docs: read (with a fields mask) flattens paragraphs (`#` headings, list items `- ` or
+  `1.` from the list's glyph, numbered per list and level, tables as TSV rows) and returns
+  `revisionId`. Append inserts at `endIndex - 1` (a leading newline when the doc has
+  content), sets NORMAL_TEXT and deletes bullets over the inserted range (UTF-16 indexes) so
+  it doesn't inherit a heading/list style, guarded by the revision just read; on a conflict
+  with that internal guard it re-reads and retries (3 attempts), then reports concurrent
+  editing without mentioning revisions.
+  Replace/fill use `replaceAllText`; `revision_id` → `writeControl.requiredRevisionId`; a stale
+  revision → `GoogleConflictError`: for requests sent with `guarded=True` only, gapi maps a
+  412, or a 400 whose message matches `required revision id .* does not match` (live, Docs:
+  HTTP 400 **INVALID_ARGUMENT** "The required revision ID '<id>' does not match the latest
+  revision."). Other FAILED_PRECONDITION/ABORTED answers stay plain GoogleApiErrors with
+  Google's text. `ConflictError` is provider-neutral (`ApiError`); `GraphConflictError` (Graph
+  412) and `GoogleConflictError` derive from it and from their provider's error.
+  `gdocs_fill_template` can copy the template first (title checked with
+  `gdrive.claim_name`, conflict fail/rename; default folder: the template's) and trashes the
+  copy if filling it fails; it reports per-key counts and unmatched keys.
+- Slides: `createSlide` with predefined layouts (TITLE for a first slide without body,
+  TITLE_AND_BODY with body/bullets, TITLE_ONLY otherwise), `placeholderIdMappings` for title and
+  body ids, `insertText`, `createParagraphBullets`; the default blank slide is deleted when
+  slides were added. Read reports title/body by placeholder type.
+- Audit extras: titles, folders, ranges, tab titles, `copy_to`, slide index. Never values,
+  Markdown, text, find/replace strings or template values.
+- To verify live: Sheets fallback create without gdrive; formulas computed when read back with
+  FORMATTED_VALUE; the exact error shape of a stale `requiredRevisionId` (Docs and Slides);
+  Markdown conversion of tables; `TITLE` layout placeholder type `CENTERED_TITLE`; deleting
+  the default slide; quoted tab names with non-ASCII characters; Slides consent (the live
+  account has only gdrive, gsheets, gdocs).
 
 Each milestone follows the existing process: tests, then `/simplify`, `/code-review`,
 `/security-review`, then commit and push to `main`.

@@ -1245,6 +1245,10 @@ async function renderTools(view, ctx) {
             h('span', { class: 't-name' }, t.name || '—'),
             t.writes ? badge('Writes', 'brass') : badge('Read only'),
             t.destructive ? badge('Destructive', 'bad') : null,
+            Array.isArray(t.requires) && t.requires.length
+              ? h('span', { class: 'badge slate', title: 'Also needs these permissions' },
+                `Also needs: ${t.requires.map(bundleLabel).join(', ')}`)
+              : null,
             t.hidden ? h('span', { class: 'badge slate', title: 'Hermes cannot see this tool with the current mode or permissions' }, 'Hidden from Hermes') : null),
           t.description ? h('p', { class: 't-desc' }, t.description) : null))));
     }));
