@@ -286,6 +286,11 @@ function bundleLabel(key) {
   return BUNDLES[key] ? BUNDLES[key].label : key || 'Other';
 }
 
+/** Display name of a provider entry from /api/providers or an account's provider_label. */
+function providerLabel(p) {
+  return String((p && (p.label || p.name)) || 'Unknown provider');
+}
+
 function accountTypeBadge(type) {
   if (type === 'personal') return badge('Personal', 'slate');
   if (type === 'work_or_school') return badge('Work or school', 'slate');
@@ -513,14 +518,16 @@ function renderAccountsTable(host, accounts, ctx) {
     return;
   }
 
-  const columns = ['Account', 'Type', 'Sign-in', 'Default', { label: 'Actions', hideLabel: true }];
+  const columns = ['Account', 'Provider', 'Type', 'Sign-in', 'Default', { label: 'Actions', hideLabel: true }];
   replace(host, dataTable(columns, accounts, (acc) => {
+    // Without a provider the server finds the one this username belongs to.
+    const who = acc.provider ? { username: acc.username, provider: acc.provider } : { username: acc.username };
     const makeDefault = acc.default
       ? h('span', { class: 'badge brass' }, h('span', { 'aria-hidden': 'true' }, '★'), 'Default')
       : h('button', { type: 'button', class: 'btn small' }, 'Make default');
     if (!acc.default) {
       makeDefault.addEventListener('click', () => onAction(makeDefault, 'Saving…', async () => {
-        const res = await api('/api/accounts/default', { method: 'POST', body: { username: acc.username } });
+        const res = await api('/api/accounts/default', { method: 'POST', body: who });
         const list = Array.isArray(res && res.accounts) ? res.accounts : null;
         if (list && ctx.alive()) { updateWhoami(list); renderAccountsTable(host, list, ctx); }
         else await loadAccountsTable(host, ctx);
@@ -537,7 +544,7 @@ function renderAccountsTable(host, accounts, ctx) {
       });
       if (!ok) return;
       await onAction(signOut, 'Signing out…', async () => {
-        await api('/api/accounts/logout', { method: 'POST', body: { username: acc.username } });
+        await api('/api/accounts/logout', { method: 'POST', body: who });
         await loadAccountsTable(host, ctx);
       }, `Signed out of ${acc.username}`);
     });
@@ -545,6 +552,7 @@ function renderAccountsTable(host, accounts, ctx) {
     return [
       [h('strong', { class: 'break' }, acc.username || 'Unnamed account'),
         acc.tenant_id ? h('span', { class: 'sub' }, 'Tenant ', h('code', null, acc.tenant_id)) : null],
+      badge(providerLabel({ label: acc.provider_label, name: acc.provider }), 'slate'),
       accountTypeBadge(acc.account_type),
       [signInBadge(acc.sign_in),
         acc.sign_in === 'valid' ? null : h('span', { class: 'sub' }, String(acc.sign_in || 'Unknown error'))],
@@ -554,37 +562,115 @@ function renderAccountsTable(host, accounts, ctx) {
   }, { rowClass: (acc) => (acc.default ? 'is-default' : null) }));
 }
 
-async function loadConnectPanel(host, ctx, reloadTable) {
-  const scopes = await load(host, ctx, '/api/scopes', () => loadConnectPanel(host, ctx, reloadTable));
-  if (!scopes) return;
+const scopesPath = (provider) => `/api/scopes?provider=${encodeURIComponent(provider)}`;
 
-  const available = Object.keys(scopes.bundles || {});
+function bundleBoxes(bundles) {
+  const available = Object.keys(bundles || {});
   const keys = [
     ...BUNDLE_ORDER.filter((k) => available.includes(k)),
     ...available.filter((k) => !BUNDLE_ORDER.includes(k)),
   ];
   if (!keys.length) keys.push(...BUNDLE_ORDER);
 
-  const boxes = keys.map((key) => {
-    const input = h('input', { type: 'checkbox', name: 'bundle', value: key, checked: key === 'files' });
-    const perms = scopes.bundles && Array.isArray(scopes.bundles[key]) ? scopes.bundles[key] : [];
+  return keys.map((key, i) => {
+    const input = h('input', { type: 'checkbox', name: 'bundle', value: key, checked: key === 'files' || (i === 0 && !keys.includes('files')) });
+    const perms = bundles && Array.isArray(bundles[key]) ? bundles[key] : [];
     return h('label', { class: 'bundle', title: perms.length ? `Permissions: ${perms.join(', ')}` : null },
       input,
       h('span', null,
         h('span', { class: 'b-name' }, bundleLabel(key)),
         h('span', { class: 'b-key' }, BUNDLES[key] ? BUNDLES[key].desc : key)));
   });
+}
+
+function providerBoxes(list, selected, onPick) {
+  return list.map((p) => {
+    const input = h('input', {
+      type: 'radio', name: 'provider', value: p.name,
+      checked: p.name === selected, disabled: !p.available,
+    });
+    input.addEventListener('change', () => { if (input.checked) onPick(p.name); });
+    return h('label', { class: p.available ? 'bundle' : 'bundle is-disabled' },
+      input,
+      h('span', null,
+        h('span', { class: 'b-name' }, providerLabel(p)),
+        h('span', { class: 'b-key' }, p.available ? 'Available' : 'Coming soon')));
+  });
+}
+
+async function loadConnectPanel(host, ctx, reloadTable) {
+  const retry = () => loadConnectPanel(host, ctx, reloadTable);
+  let listed;
+  let scopes;
+  try {
+    // /api/scopes without a provider = the default provider, which /api/providers lists first.
+    [listed, scopes] = await Promise.all([apiGet('/api/providers'), apiGet('/api/scopes')]);
+  } catch (err) {
+    if (ctx.alive()) replace(host, errorBox(err, retry));
+    return;
+  }
+  if (!ctx.alive()) return;
+  const providers = (Array.isArray(listed) ? listed : [])
+    .filter((p) => p && typeof p.name === 'string');
+  const first = providers.find((p) => p.available);
+  if (!first) {
+    replace(host, h('p', { class: 'muted' }, 'No sign-in provider is available in this version of broker365.'));
+    return;
+  }
+  let provider = first.name;
+  const byName = new Map(providers.map((p) => [p.name, p]));
+  const scopeCache = new Map([[provider, scopes && scopes.bundles]]);
+
+  const bundleSet = h('fieldset', { class: 'bundles' });
+  const showBundles = (bundles) => replace(bundleSet, h('legend', null, 'Permissions'), bundleBoxes(bundles));
+  showBundles(scopeCache.get(provider));
+
+  const radios = () => [...form.querySelectorAll('input[name="provider"]')];
+  const checkedProvider = () => {
+    const r = radios().find((i) => i.checked);
+    return r ? r.value : null;
+  };
+  // Each pick gets a sequence number; a scopes response that arrives after a newer pick (or
+  // after the radio changed again) is dropped, so `provider` always matches the checked radio.
+  let pickSeq = 0;
+  const pickProvider = async (name) => {
+    const seq = ++pickSeq;
+    const current = () => seq === pickSeq && ctx.alive() && checkedProvider() === name;
+    try {
+      if (!scopeCache.has(name)) {
+        const next = await apiGet(scopesPath(name));
+        scopeCache.set(name, next && next.bundles);
+      }
+      if (!current()) return;
+      if (name !== provider) {
+        provider = name;
+        showBundles(scopeCache.get(name));
+      }
+    } catch (err) {
+      if (!current()) return;
+      const prev = radios().find((i) => i.value === provider);
+      if (prev) prev.checked = true;
+      toastError(err);
+    }
+  };
 
   const startBtn = h('button', { type: 'submit', class: 'btn primary' }, 'Start sign-in');
   const flowHost = h('div', { 'aria-live': 'polite' });
   const form = h('form', null,
-    h('fieldset', { class: 'bundles' }, h('legend', null, 'Permissions'), boxes),
+    h('fieldset', { class: 'bundles' }, h('legend', null, 'Provider'), providerBoxes(providers, provider, pickProvider)),
+    bundleSet,
     h('div', { class: 'row' }, startBtn,
       h('span', { class: 'muted small' }, 'Works for personal and work or school accounts.')),
   );
 
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    const picked = checkedProvider();
+    if (!picked || picked !== provider) {
+      // The checked provider's permissions are still loading (or failed to load).
+      toast('Wait for the permissions of the selected provider to load.', 'bad');
+      return;
+    }
     const chosen = [...form.querySelectorAll('input[name="bundle"]:checked')].map((i) => i.value);
     if (!chosen.length) {
       toast('Tick at least one permission to sign in.', 'bad');
@@ -593,11 +679,14 @@ async function loadConnectPanel(host, ctx, reloadTable) {
     cancelActiveFlow();
     let flow = null;
     await onAction(startBtn, 'Starting…', async () => {
-      flow = await api('/api/login/start', { method: 'POST', body: { scopes: chosen } });
+      flow = await api('/api/login/start', { method: 'POST', body: { scopes: chosen, provider: picked } });
     });
     // Start the flow only after onAction has re-enabled the button, so the flow can keep it
     // disabled while a code is on screen.
-    if (flow && ctx.alive()) runSignInFlow(flowHost, flow, ctx, reloadTable, startBtn);
+    if (flow && ctx.alive()) {
+      const label = providerLabel(byName.get(flow.provider) || { name: flow.provider });
+      runSignInFlow(flowHost, flow, label, ctx, reloadTable, startBtn);
+    }
   });
 
   replace(host, form, flowHost);
@@ -611,7 +700,96 @@ function codeTiles(code) {
       : h('span', { 'aria-hidden': 'true' }, ch))));
 }
 
-function runSignInFlow(host, flow, ctx, reloadTable, startBtn) {
+/** Render a /api/login/start result by its `kind`, not by provider. */
+function runSignInFlow(host, flow, label, ctx, reloadTable, startBtn) {
+  if (flow.kind === 'authorize_url') runRedirectFlow(host, flow, label, ctx, reloadTable, startBtn);
+  else runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn);
+}
+
+/** Replace a sign-in card with its outcome. */
+function flowResult(host, ok, title, detail) {
+  if (!host.isConnected) return;
+  replace(host, h('div', { class: `keytag ${ok ? 'done' : 'failed'}`, role: ok ? 'status' : 'alert' },
+    h('h3', null, title),
+    detail ? h('p', { class: 'break' }, detail) : null,
+    ok ? null : h('p', { class: 'muted small' }, 'Pick your permissions above and start sign-in again.')));
+}
+
+async function flowSignedIn(res, ctx, reloadTable, finish) {
+  const who = res.username || 'your account';
+  finish(true, `Signed in as ${who}`, 'Hermes can use this account now.');
+  toast(`Signed in as ${who}`);
+  if (ctx.alive()) await reloadTable();
+}
+
+/** authorize_url: the user opens the provider's page, signs in, then pastes back the URL the
+ *  browser was redirected to. No polling: one POST with the pasted URL finishes it. */
+function runRedirectFlow(host, flow, label, ctx, reloadTable, startBtn) {
+  const total = Math.max(1, Number(flow.expires_in) || 600);
+  const state = { cancelled: false, timer: null, deadline: Date.now() + total * 1000 };
+  activeFlow = state;
+
+  const open = extLink(flow.authorize_url, 'Open sign-in page');
+  if (open.tagName === 'A') open.classList.add('btn', 'primary');
+  const inputId = `redirect-${String(flow.flow_id || '').replace(/[^A-Za-z0-9_-]/g, '')}`;
+  const input = h('input', {
+    type: 'url', id: inputId, name: 'redirect_url', required: true,
+    placeholder: 'http://127.0.0.1/?code=...&state=...', autocomplete: 'off', spellcheck: 'false',
+  });
+  const submitBtn = h('button', { type: 'submit', class: 'btn' }, 'Finish sign-in');
+  const cancelBtn = h('button', { type: 'button', class: 'btn' }, 'Cancel');
+  const pasteForm = h('form', { class: 'field' },
+    h('label', { for: inputId }, 'Paste the address-bar URL'),
+    h('div', { class: 'row' }, h('div', { class: 'grow-input' }, input), submitBtn),
+    h('span', { class: 'hint' }, 'After you approve, the browser may show an error page. That is expected: copy its full address and paste it here.'));
+
+  const card = h('div', { class: 'keytag' },
+    h('h3', null, `Finish signing in to ${label}`),
+    flow.instructions ? h('p', { class: 'break' }, String(flow.instructions)) : null,
+    h('div', { class: 'row' }, open),
+    pasteForm,
+    h('div', { class: 'row' }, cancelBtn),
+  );
+  replace(host, card);
+  startBtn.disabled = true;
+
+  const finish = (ok, title, detail) => {
+    stopFlow(state);
+    if (startBtn.isConnected) startBtn.disabled = false;
+    flowResult(host, ok, title, detail);
+  };
+  cancelBtn.addEventListener('click', () => finish(false, 'Sign-in cancelled', 'Nothing changed.'));
+
+  pasteForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const url = input.value.trim();
+    if (!url) { input.focus(); return; }
+    if (Date.now() > state.deadline) {
+      finish(false, 'The sign-in link expired', 'Sign-in links are valid for a limited time.');
+      return;
+    }
+    let res = null;
+    await withBusy(submitBtn, 'Finishing...', async () => {
+      try {
+        res = await api('/api/login/complete', { method: 'POST', body: { flow_id: flow.flow_id, redirect_url: url } });
+      } catch (err) {
+        if (!state.cancelled) toastError(err);
+      }
+    });
+    if (state.cancelled || !res) return;
+    if (res.status === 'signed_in') {
+      await flowSignedIn(res, ctx, reloadTable, finish);
+      return;
+    }
+    const msg = res.error || res.message || `Sign-in stopped (${res.status || 'unknown status'}).`;
+    finish(false, 'Sign-in failed', msg);
+    toast(msg, 'bad');
+  });
+  input.focus();
+}
+
+/** device_code: show the code, poll /api/login/complete until signed in or expired. */
+function runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn) {
   const code = String(flow.user_code || '');
   const total = Math.max(1, Number(flow.expires_in) || 900);
   const state = { cancelled: false, timer: null, deadline: Date.now() + total * 1000 };
@@ -636,7 +814,7 @@ function runSignInFlow(host, flow, ctx, reloadTable, startBtn) {
     h('h3', null, 'Finish signing in'),
     h('ol', null,
       h('li', null, 'Open ', extLink(flow.verification_uri, flow.verification_uri)),
-      h('li', null, 'Enter this code and pick your Microsoft account.'),
+      h('li', null, `Enter this code and pick your ${label} account.`),
       h('li', null, 'Approve the permissions. This page updates by itself.')),
     h('div', { class: 'code-row' }, codeTiles(code), copyBtn),
     progress,
@@ -661,11 +839,7 @@ function runSignInFlow(host, flow, ctx, reloadTable, startBtn) {
   const finish = (ok, title, detail) => {
     stopFlow(state);
     if (startBtn.isConnected) startBtn.disabled = false;
-    if (!host.isConnected) return;
-    replace(host, h('div', { class: `keytag ${ok ? 'done' : 'failed'}`, role: ok ? 'status' : 'alert' },
-      h('h3', null, title),
-      detail ? h('p', { class: 'break' }, detail) : null,
-      ok ? null : h('p', { class: 'muted small' }, 'Pick your permissions above and start sign-in again.')));
+    flowResult(host, ok, title, detail);
   };
 
   cancelBtn.addEventListener('click', () => {
@@ -691,10 +865,7 @@ function runSignInFlow(host, flow, ctx, reloadTable, startBtn) {
       if (state.cancelled) return;
       const status = res && res.status;
       if (status === 'signed_in') {
-        const who = res.username || 'your account';
-        finish(true, `Signed in as ${who}`, 'Hermes can use this account now.');
-        toast(`Signed in as ${who}`);
-        if (ctx.alive()) await reloadTable();
+        await flowSignedIn(res, ctx, reloadTable, finish);
         return;
       }
       if (status !== 'pending') {

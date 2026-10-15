@@ -1,46 +1,69 @@
-"""Sign-in status and chat-friendly device-code login, so an agent can connect an account
-without the user touching a terminal."""
+"""Sign-in status and chat-friendly login, so an agent can connect an account without the
+user touching a terminal."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from broker365 import auth, config
+from broker365 import config, providers
 from broker365.errors import Broker365Error
 from broker365.services import tool
 
 
 @tool("core")
 def account_status() -> dict[str, Any]:
-    """Show which Microsoft accounts are connected and whether their sign-in is still valid."""
+    """Show which accounts are connected (each with its `provider`, e.g. microsoft) and
+    whether their sign-in is still valid."""
     out: dict[str, Any] = {
         "home": str(config.broker_home()),
         "workspace": str(config.workspace()),
         "read_only": config.read_only(),
     }
-    try:
-        accounts = auth.list_accounts()
-    except Broker365Error as exc:
-        return {**out, "signed_in": False, "accounts": [], "error": str(exc)}
-    for acct in accounts:
+    accounts: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for provider in providers.all():
         try:
-            auth.get_token("core", acct["username"])
-            acct["sign_in"] = "valid"
+            found = provider.list_accounts()
         except Broker365Error as exc:
-            acct["sign_in"] = str(exc)
-    return {**out, "signed_in": bool(accounts), "accounts": accounts}
+            errors.append(str(exc))
+            continue
+        for acct in found:
+            try:
+                provider.check_token(acct["username"])
+                acct["sign_in"] = "valid"
+            except Broker365Error as exc:
+                acct["sign_in"] = str(exc)
+        accounts += found
+    out = {**out, "signed_in": bool(accounts), "accounts": accounts}
+    if errors:
+        out["error"] = "; ".join(errors)
+    return out
 
 
 @tool("core")
-def account_login_start(scopes: list[str] | None = None) -> dict[str, Any]:
-    """Start a Microsoft sign-in. Show the user `verification_uri` and `user_code`, then call
-    account_login_complete with `flow_id`. scopes: files, mail, calendar, contacts, tasks,
-    files-shared, sharepoint, onenote (default: files)."""
-    return auth.device_flow_start(scopes or ["files"])
+def account_login_start(
+    scopes: list[str] | None = None, provider: str | None = providers.DEFAULT
+) -> dict[str, Any]:
+    """Start a sign-in and relay `instructions` to the user. If `kind` is "device_code", they
+    open `verification_uri` and enter `user_code`; then call account_login_complete with
+    `flow_id`. If `kind` is "authorize_url", they open `authorize_url`, sign in and paste back
+    the address-bar URL they land on; then call account_login_complete with `flow_id` and that
+    `redirect_url`. provider: microsoft (default). scopes: that provider's bundles, for
+    microsoft files, mail, calendar, contacts, tasks, files-shared, sharepoint, onenote
+    (default: the provider's first, files)."""
+    p = providers.get(provider)
+    bundles = providers.validate_bundles(p.name, scopes) if scopes else list(p.bundles())[:1]
+    return p.login_start(bundles)
 
 
 @tool("core")
-def account_login_complete(flow_id: str, wait_seconds: int = 60) -> dict[str, Any]:
-    """Wait up to `wait_seconds` for the user to finish signing in. Returns status 'pending'
-    (call again) or 'signed_in'."""
-    return auth.device_flow_complete(flow_id, wait_seconds=max(1, min(wait_seconds, 100)))
+def account_login_complete(
+    flow_id: str, wait_seconds: int = 60, redirect_url: str | None = None
+) -> dict[str, Any]:
+    """Finish a sign-in from account_login_start. For a "device_code" flow, waits up to
+    `wait_seconds` for the user and returns status 'pending' (call again) or 'signed_in'.
+    For an "authorize_url" flow (needs_redirect_url), pass the URL the user pasted back as
+    `redirect_url`. Leave redirect_url empty for device-code flows (e.g. Microsoft)."""
+    return providers.login_complete(
+        flow_id, wait_seconds=max(1, min(wait_seconds, 100)), redirect_url=redirect_url
+    )

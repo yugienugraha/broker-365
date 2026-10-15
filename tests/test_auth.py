@@ -95,12 +95,14 @@ def test_device_flow_pending_then_signed_in(fake):
     started = auth.device_flow_start(["files"])
     assert "device_code" not in started
     flow_file = config.broker_home() / "flows" / f"{started['flow_id']}.json"
-    assert json.loads(flow_file.read_text())["device_code"] == "secret-device-code"
+    stored = json.loads(flow_file.read_text())
+    assert stored["provider"] == "microsoft"
+    assert stored["data"]["device_code"] == "secret-device-code"  # MSAL's flow, kept opaque
     assert auth.device_flow_complete(started["flow_id"], wait_seconds=1)["status"] == "pending"
     done = auth.device_flow_complete(started["flow_id"], wait_seconds=1)
     assert done["status"] == "signed_in" and done["account_type"] == "personal"
     assert not flow_file.exists()
-    assert config.load_settings()["default_account"] == "bob@outlook.com"
+    assert config.load_settings()["default_accounts"] == {"microsoft": "bob@outlook.com"}
 
 
 def test_flow_id_cannot_traverse(fake):
@@ -149,10 +151,10 @@ def test_token_memo_avoids_repeat_msal_calls(fake):
 def test_default_account_case_insensitive(fake):
     app = fake(accounts=[ALICE, BOB])
     auth.set_default("ALICE@contoso.COM")
-    assert config.load_settings()["default_account"] == "alice@contoso.com"
+    assert config.default_account("microsoft") == "alice@contoso.com"
     assert [a["default"] for a in auth.list_accounts()] == [True, False]
     auth.logout()
-    assert app.removed == [ALICE] and "default_account" not in config.load_settings()
+    assert app.removed == [ALICE] and "default_accounts" not in config.load_settings()
 
 
 def test_account_type_comes_from_home_account_id_not_realm(fake):

@@ -4,7 +4,8 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from broker365 import audit, auth, config, hermes
-from broker365.errors import Broker365Error
+from broker365.errors import Broker365Error, ReauthRequired
+from broker365.providers import flows
 from broker365.ui import server
 
 TOKEN = "t0ken-for-tests"
@@ -181,26 +182,47 @@ def test_overview(authed, accounts, monkeypatch):
 
 def test_login_and_accounts(authed, accounts, monkeypatch):
     calls = []
+    fid = flows.save("microsoft", {})
     monkeypatch.setattr(
-        auth, "device_flow_start", lambda b: calls.append(b) or {"flow_id": "F", "user_code": "C"}
+        auth, "device_flow_start", lambda b: calls.append(b) or {"flow_id": fid, "user_code": "C"}
     )
     monkeypatch.setattr(
         auth,
         "device_flow_complete",
-        lambda f, wait_seconds: calls.append(wait_seconds) or {"status": "pending", "flow_id": f},
+        lambda f, wait_seconds, flow=None: (
+            calls.append(wait_seconds) or {"status": "pending", "flow_id": f}
+        ),
     )
     monkeypatch.setattr(auth, "set_default", lambda u: calls.append(u))
-    monkeypatch.setattr(auth, "logout", lambda u: u)
+
+    def logout(u):  # like auth.logout; with one provider, resolve() leaves the lookup to it
+        if u != "a@contoso.com":
+            raise ReauthRequired(f"Account {u} is not signed in. Run: broker365 login")
+        return u
+
+    monkeypatch.setattr(auth, "logout", logout)
     r = authed.post("/api/login/start", headers=API, json={"scopes": ["files", "mail"]})
-    assert r.json()["flow_id"] == "F" and calls[-1] == ["files", "mail"]
-    r = authed.post("/api/login/complete", headers=API, json={"flow_id": "F"})
-    assert r.json() == {"status": "pending", "flow_id": "F"} and calls[-1] == 5
+    started = r.json()
+    assert started["flow_id"] == fid and calls[-1] == ["files", "mail"]
+    assert started["kind"] == "device_code" and started["needs_redirect_url"] is False
+    r = authed.post("/api/login/complete", headers=API, json={"flow_id": fid})
+    assert r.json() == {"status": "pending", "flow_id": fid} and calls[-1] == 5
+    # redirect_url is forwarded to the provider (Microsoft refuses it)
+    body = {"flow_id": fid, "redirect_url": "http://127.0.0.1/?code=x"}
+    r = authed.post("/api/login/complete", headers=API, json=body)
+    assert r.status_code == 400 and "only for Google" in r.json()["error"]
+    r = authed.post("/api/login/complete", headers=API, json={"flow_id": fid, "redirect_url": 1})
+    assert r.status_code == 400
+    r = authed.post("/api/login/start", headers=API, json={"scopes": ["nope"]})
+    assert r.status_code == 400 and "Unknown scope bundle(s): nope" in r.json()["error"]
     authed.post("/api/login/start", headers=API, json={})
     assert calls[-1] == ["files"]
     r = authed.post("/api/accounts/default", headers=API, json={"username": "a@contoso.com"})
     assert r.json()["accounts"][0]["username"] == "a@contoso.com"
     r = authed.post("/api/accounts/logout", headers=API, json={"username": "a@contoso.com"})
     assert r.json() == {"signed_out": "a@contoso.com"}
+    r = authed.post("/api/accounts/logout", headers=API, json={"username": "ghost@x.com"})
+    assert r.status_code == 400 and "ghost@x.com is not signed in" in r.json()["error"]
     r = authed.post("/api/login/start", headers=API, json={"scopes": "files"})
     assert r.status_code == 400
     assert authed.post("/api/login/complete", headers=API, json={}).status_code == 400
@@ -241,7 +263,7 @@ def test_tools_flags_hidden_in_read_only(authed, monkeypatch):
     assert tools["files_delete"]["hidden"] and not tools["files_list"]["hidden"]
     assert "\n" not in tools["files_list"]["description"]
     assert set(tools["files_list"]) == {
-        "name", "bundle", "writes", "destructive", "description", "hidden"
+        "name", "provider", "bundle", "writes", "destructive", "description", "hidden"
     }  # fmt: skip
 
 
@@ -349,3 +371,48 @@ def test_cli_ui_prints_url_and_warns_off_loopback(monkeypatch):
     for host, shown in (("localhost", "127.0.0.1"), ("::1", "[::1]"), ("fe80::1", "[fe80::1]")):
         result = CliRunner().invoke(cli.app, ["ui", "--host", host, "--no-browser"])
         assert f"http://{shown}:8365/?token=" in result.output, result.output
+
+
+def test_providers_and_provider_params(authed, accounts, monkeypatch):
+    r = authed.get("/api/providers", headers=API)
+    assert r.json() == [
+        {"name": "microsoft", "label": "Microsoft 365", "available": True},
+        {"name": "google", "label": "Google Workspace", "available": False},
+    ]
+    ms = authed.get("/api/scopes?provider=microsoft", headers=API).json()
+    assert ms == authed.get("/api/scopes", headers=API).json()
+    r = authed.get("/api/scopes?provider=google", headers=API)
+    assert r.status_code == 400 and "not available yet" in r.json()["error"]
+
+    calls = []
+    monkeypatch.setattr(auth, "device_flow_start", lambda b: calls.append(b) or {"flow_id": "F"})
+    monkeypatch.setattr(auth, "set_default", calls.append)
+
+    def logout(u):  # like auth.logout; with one provider, resolve() leaves the lookup to it
+        if u != "a@contoso.com":
+            raise ReauthRequired(f"Account {u} is not signed in. Run: broker365 login")
+        return u
+
+    monkeypatch.setattr(auth, "logout", logout)
+    body = {"scopes": ["mail"], "provider": "microsoft"}
+    r = authed.post("/api/login/start", headers=API, json=body)
+    assert r.json()["provider"] == "microsoft" and r.json()["flow_id"] == "F"
+    assert calls == [["mail"]]
+    r = authed.post("/api/login/start", headers=API, json={"provider": "google"})
+    assert r.status_code == 400 and "not available yet" in r.json()["error"]
+    r = authed.post("/api/login/start", headers=API, json={"provider": 1})
+    assert r.status_code == 400
+
+    body = {"username": "a@contoso.com", "provider": "microsoft"}
+    r = authed.post("/api/accounts/default", headers=API, json=body)
+    assert r.json()["accounts"][0]["provider"] == "microsoft"
+    r = authed.post("/api/accounts/logout", headers=API, json=body)
+    assert r.json() == {"signed_out": "a@contoso.com"}
+    body = {"username": "a@contoso.com", "provider": "google"}
+    for path in ("/api/accounts/default", "/api/accounts/logout"):
+        assert authed.post(path, headers=API, json=body).status_code == 400
+
+    monkeypatch.setattr(hermes, "status", lambda: {})
+    overview = authed.get("/api/overview", headers=API).json()
+    assert overview["accounts"][0]["provider"] == "microsoft"
+    assert overview["accounts"][0]["provider_label"] == "Microsoft 365"

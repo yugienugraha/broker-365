@@ -10,8 +10,9 @@ from typing import Any
 
 import typer
 
-from broker365 import __version__, audit, auth, config, services
+from broker365 import __version__, audit, config, providers, services
 from broker365.errors import Broker365Error
+from broker365.providers import flows
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -22,10 +23,23 @@ hermes_app = typer.Typer(help="Hermes Agent integration.", no_args_is_help=True)
 app.add_typer(hermes_app, name="hermes")
 
 ScopesOpt = typer.Option(
-    "files",
+    None,
     "--scopes",
     "-s",
-    help=f"Comma-separated bundles: {', '.join(config.user_bundles())}",
+    help="Comma-separated bundles (default: the provider's first). "
+    + "; ".join(f"{p.name}: {', '.join(p.bundles())}" for p in providers.all()),
+)
+ProviderOpt = typer.Option(
+    None,
+    "--provider",
+    "-p",
+    help="Identity provider: microsoft (default; google: soon). With --complete: the flow's.",
+)
+AccountProviderOpt = typer.Option(
+    None,
+    "--provider",
+    "-p",
+    help="Identity provider (default: the one the account belongs to, else microsoft).",
 )
 
 
@@ -41,10 +55,36 @@ def _run(fn, *args: Any, **kwargs: Any) -> Any:
         raise typer.Exit(1) from None
 
 
-def _bundles(scopes: str) -> list[str]:
-    bundles = [s.strip() for s in scopes.split(",") if s.strip()]
-    _run(config.scopes_for, bundles)  # validates names
-    return bundles
+def _provider(name: str | None) -> providers.Provider:
+    return _run(providers.get, name)
+
+
+def _usage_error(message: str) -> None:
+    typer.echo(f"error: {message}", err=True)
+    raise typer.Exit(2)
+
+
+def _bundles(scopes: str | None, provider: providers.Provider) -> list[str]:
+    bundles = [s.strip() for s in (scopes or "").split(",") if s.strip()]
+    if not bundles:
+        return list(provider.bundles())[:1]
+    return _run(providers.validate_bundles, provider.name, bundles)
+
+
+def _finish_headless(p: providers.Provider, flow: dict[str, Any]) -> None:
+    """Show a login_start result by its kind and complete it from this terminal."""
+    if flow.get("kind") == "authorize_url":
+        typer.echo(flow.get("instructions") or "Open this URL and sign in:")
+        typer.echo(flow["authorize_url"])
+        redirect_url = typer.prompt("Paste the full address-bar URL you were redirected to")
+        _out(_run(providers.login_complete, flow["flow_id"], redirect_url=redirect_url.strip()))
+        return
+    typer.echo(
+        flow.get("message")
+        or flow.get("instructions")
+        or f"Open {flow['verification_uri']} and enter {flow['user_code']}"
+    )
+    _out(_run(providers.login_complete, flow["flow_id"]))
 
 
 @app.command()
@@ -57,26 +97,36 @@ def version() -> None:
 def login(
     scopes: str = ScopesOpt,
     device_code: bool = typer.Option(False, "--device-code", help="Sign in from another device."),
-    start: bool = typer.Option(False, "--start", help="Device code: print JSON and return."),
-    complete: str = typer.Option(None, "--complete", help="Device code: finish flow FLOW_ID."),
+    start: bool = typer.Option(False, "--start", help="Start a remote sign-in: print JSON."),
+    complete: str = typer.Option(None, "--complete", help="Finish sign-in flow FLOW_ID."),
+    redirect_url: str = typer.Option(
+        None, "--redirect-url", help="With --complete: the URL the browser was redirected to."
+    ),
     port: int = typer.Option(None, "--port", help="Loopback port for browser sign-in."),
+    provider: str | None = ProviderOpt,
 ) -> None:
-    """Sign in to a Microsoft account (browser, or device code on headless machines)."""
+    """Sign in to an account (browser, or device code on headless machines)."""
+    if redirect_url is not None and not complete:
+        _usage_error("--redirect-url only goes with --complete FLOW_ID.")
     if complete:
-        _out(_run(auth.device_flow_complete, complete))
+        if provider is not None:
+            flow_provider, _ = _run(flows.load, complete)
+            if _provider(provider).name != flow_provider:
+                _usage_error(
+                    f"Flow {complete} was started with provider '{flow_provider}', "
+                    f"not '{provider}'. Leave out --provider."
+                )
+        _out(_run(providers.login_complete, complete, redirect_url=redirect_url))
         return
-    bundles = _bundles(scopes)
+    p = _provider(provider)
+    bundles = _bundles(scopes, p)
     if start:
-        _out(_run(auth.device_flow_start, bundles))
+        _out(_run(p.login_start, bundles))
         return
     if device_code or not _has_browser():
-        flow = _run(auth.device_flow_start, bundles)
-        typer.echo(
-            flow["message"] or f"Open {flow['verification_uri']} and enter {flow['user_code']}"
-        )
-        _out(_run(auth.device_flow_complete, flow["flow_id"]))
+        _finish_headless(p, _run(p.login_start, bundles))
         return
-    _out(_run(auth.login_interactive, bundles, port))
+    _out(_run(p.login_interactive, bundles, port))
 
 
 def _has_browser() -> bool:
@@ -92,23 +142,26 @@ def _has_browser() -> bool:
 
 
 @app.command()
-def logout(account: str = typer.Option(None, "--account", "-a")) -> None:
+def logout(
+    account: str = typer.Option(None, "--account", "-a"),
+    provider: str = AccountProviderOpt,
+) -> None:
     """Remove an account's tokens from this machine."""
-    name = _run(auth.logout, account)
-    typer.echo(
-        f"Signed out {name}. To revoke the app entirely: https://myapps.microsoft.com "
-        "(work) or https://account.live.com/consent/Manage (personal)."
-    )
+    p, username = _run(providers.resolve, account, provider)
+    name = _run(p.logout, username)
+    typer.echo(f"Signed out {name}. {p.revoke_hint}")
 
 
 @app.command()
 def accounts(
     default: str = typer.Option(None, "--default", help="Set the default account."),
+    provider: str = AccountProviderOpt,
 ) -> None:
-    """List signed-in accounts (optionally set the default)."""
+    """List signed-in accounts of every provider (optionally set a provider's default)."""
     if default:
-        _run(auth.set_default, default)
-    _out(_run(auth.list_accounts))
+        p, username = _run(providers.resolve, default, provider)
+        _run(p.set_default, username)
+    _out(_run(providers.all_accounts))
 
 
 @app.command()

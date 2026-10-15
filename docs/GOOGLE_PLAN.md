@@ -99,7 +99,7 @@ src/broker365/
 ```
 
 - **Connections, not just accounts.** An account becomes `(provider, username)`.
-  - The default account is stored **per provider** (`default_account.microsoft`, `default_account.google`). Today's `default_account` key is migrated.
+  - The default account is stored **per provider** (`default_accounts.microsoft`, `default_accounts.google`). The legacy `default_account` key counts as Microsoft's and is moved on the next write (done in G1).
   - Tools pick the provider's default; an optional `account` argument selects another one.
 - **Token storage.** Google refresh tokens live in an encrypted blob `google_tokens.bin`. It uses the *same* `msal_extensions` persistence: DPAPI / Keychain / libsecret, with a mode-600 fallback.
   - Each entry holds: refresh token, granted scopes, email, `sub`, expiry.
@@ -145,7 +145,7 @@ Safety rules carry over unchanged:
 | # | Scope | Done when |
 |---|---|---|
 | G0 ✅ | Publisher GCP project + Desktop client (§2) | Done 2026-10-15, see §2a |
-| G1 | `providers/` abstraction; Microsoft moved behind it with **no behaviour change**; per-provider default account + settings migration | All existing tests (201) pass unchanged |
+| G1 ✅ | `providers/` abstraction; Microsoft moved behind it with **no behaviour change**; per-provider default account + settings migration | Done 2026-10-15: `providers/` registry + Microsoft adapter, `default_accounts` (legacy key migrated on next write), `provider` on accounts/flows/tools/audit/CLI/dashboard; existing 201 tests pass (assertions only gained `provider` / `default_accounts`) |
 | G2 | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart |
 | G3 | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export |
 | G4 | Sheets, Docs, Slides tools (native batchUpdate) | Live smoke: create sheet, write formulas, read back computed values; doc from Markdown; slides from outline |

@@ -66,6 +66,7 @@ def test_tools_catalog_matches_cli_and_flags_hidden(monkeypatch):
     catalog = {t["name"]: t for t in services.tool_catalog()}
     assert catalog["files_delete"] == {
         "name": "files_delete",
+        "provider": "microsoft",
         "bundle": "files",
         "writes": True,
         "destructive": True,

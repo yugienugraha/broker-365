@@ -270,6 +270,7 @@ label { font-weight: 500; }
 }
 .bundle:has(input:checked) { border-color: var(--slate); background: var(--surface); }
 .bundle input { margin-top: 4px; accent-color: var(--slate); }
+.bundle.is-disabled { opacity: 0.6; cursor: not-allowed; }
 .bundle .b-name { display: block; font-weight: 600; }
 .bundle .b-key { display: block; font-size: 0.82rem; color: var(--muted); line-height: 1.35; margin-top: 2px; }
 

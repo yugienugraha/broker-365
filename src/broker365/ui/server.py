@@ -33,7 +33,7 @@ from starlette.responses import (
 )
 from starlette.routing import Route
 
-from broker365 import __version__, audit, auth, config, hermes, services
+from broker365 import __version__, audit, config, hermes, providers, services
 from broker365.errors import Broker365Error
 from broker365.services import account
 
@@ -102,28 +102,41 @@ def overview() -> dict[str, Any]:
     }
 
 
-def scopes() -> dict[str, Any]:
-    return {"bundles": {b: config.SCOPE_BUNDLES[b] for b in config.user_bundles()}}
+def _provider(body: dict[str, Any]) -> str | None:
+    """The optional `provider` field; None means the default (or, with a username, the
+    provider that account belongs to)."""
+    return _field(body, "provider", str, required=False)
+
+
+def scopes(query: dict[str, str]) -> dict[str, Any]:
+    return {"bundles": providers.get(query.get("provider")).bundles()}
 
 
 def login_start(body: dict[str, Any]) -> dict[str, Any]:
     bundles = _field(body, "scopes", list, required=False)
     if bundles is not None and not all(isinstance(b, str) for b in bundles):
         raise Broker365Error("'scopes' must be a list of bundle names")
-    return account.account_login_start(bundles)
+    # account_login_start checks the bundles against the provider (providers.validate_bundles)
+    return account.account_login_start(bundles, provider=_provider(body))
 
 
 def login_complete(body: dict[str, Any]) -> dict[str, Any]:
-    return account.account_login_complete(_field(body, "flow_id", str), wait_seconds=5)
+    return account.account_login_complete(
+        _field(body, "flow_id", str),
+        wait_seconds=5,
+        redirect_url=_field(body, "redirect_url", str, required=False),
+    )
 
 
 def set_default(body: dict[str, Any]) -> dict[str, Any]:
-    auth.set_default(_field(body, "username", str))
-    return {"accounts": auth.list_accounts()}
+    p, username = providers.resolve(_field(body, "username", str), _provider(body))
+    p.set_default(username)
+    return {"accounts": providers.all_accounts()}
 
 
 def logout(body: dict[str, Any]) -> dict[str, Any]:
-    return {"signed_out": auth.logout(_field(body, "username", str))}
+    p, username = providers.resolve(_field(body, "username", str), _provider(body))
+    return {"signed_out": p.logout(username)}
 
 
 def get_settings() -> dict[str, Any]:
@@ -259,6 +272,7 @@ def create_app(
         Route("/", index),
         Route("/static/{name}", asset),
         Route("/api/overview", api(overview)),
+        Route("/api/providers", api(providers.catalog)),
         Route("/api/scopes", api(scopes)),
         Route("/api/login/start", api(login_start), methods=["POST"]),
         Route("/api/login/complete", api(login_complete), methods=["POST"]),

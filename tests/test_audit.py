@@ -96,9 +96,13 @@ def test_admin_actions_are_audited_from_shared_functions(monkeypatch, tmp_path):
     assert got == [
         ("admin:settings", {"read_only": True, "dirs_added": [str(d.resolve())]}, True),
         ("admin:hermes_install", {"hermes_home": str(tmp_path / "hh")}, True),
-        ("admin:logout", {"username": "bob@outlook.com"}, True),
-        ("admin:set_default", {"username": "bob@outlook.com"}, True),
-        ("admin:login", {"username": "bob@outlook.com", "scopes": ["files"]}, True),
+        ("admin:logout", {"provider": "microsoft", "username": "bob@outlook.com"}, True),
+        ("admin:set_default", {"provider": "microsoft", "username": "bob@outlook.com"}, True),
+        (
+            "admin:login",
+            {"provider": "microsoft", "username": "bob@outlook.com", "scopes": ["files"]},
+            True,
+        ),
     ]
     assert all(e["ts"] for e in audit.read())
     assert "secret-device-code" not in (config.broker_home() / "audit.log").read_text()

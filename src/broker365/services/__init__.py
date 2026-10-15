@@ -35,6 +35,7 @@ class Tool:
     bundle: str
     writes: bool
     destructive: bool
+    provider: str = config.MICROSOFT
 
     @property
     def description(self) -> str:
@@ -44,12 +45,21 @@ class Tool:
 TOOLS: dict[str, Tool] = {}
 
 
-def tool(bundle: str, *, writes: bool = False, destructive: bool = False):
-    """Register a service function. `writes` tools are hidden in read-only mode;
-    `destructive` tools (delete/send/share/overwrite) are flagged to MCP clients."""
+def tool(
+    bundle: str,
+    provider: str = config.MICROSOFT,
+    *,
+    writes: bool = False,
+    destructive: bool = False,
+):
+    """Register a service function. `bundle` is a scope bundle of `provider`. `writes` tools
+    are hidden in read-only mode; `destructive` tools (delete/send/share/overwrite) are
+    flagged to MCP clients."""
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
-        TOOLS[fn.__name__] = Tool(fn.__name__, fn, bundle, writes or destructive, destructive)
+        TOOLS[fn.__name__] = Tool(
+            fn.__name__, fn, bundle, writes or destructive, destructive, provider
+        )
         return fn
 
     return deco
@@ -75,6 +85,7 @@ def tool_catalog() -> list[dict[str, Any]]:
     return [
         {
             "name": t.name,
+            "provider": t.provider,
             "bundle": t.bundle,
             "writes": t.writes,
             "destructive": t.destructive,

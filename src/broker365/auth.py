@@ -10,8 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
-import secrets
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -23,11 +21,12 @@ from msal_extensions.persistence import PersistenceNotFound
 
 from broker365 import audit, config
 from broker365.errors import Broker365Error, ConsentRequired, ReauthRequired
+from broker365.providers import flows
 
 log = logging.getLogger(__name__)
 
-_FLOW_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _CONSENT_MARKERS = ("consent_required", "AADSTS65001", "interaction_required")
+PROVIDER = config.MICROSOFT  # name in default_accounts, flow files and audit entries
 
 
 # ---- cache / app ----------------------------------------------------------------------
@@ -101,7 +100,7 @@ def describe(account: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_accounts() -> list[dict[str, Any]]:
-    default = (config.load_settings().get("default_account") or "").lower()
+    default = (config.default_account(PROVIDER) or "").lower()
     return [
         {**describe(a), "default": (a.get("username") or "").lower() == default}
         for a in app().get_accounts()
@@ -113,7 +112,7 @@ def current_account(username: str | None = None) -> dict[str, Any]:
     wanted = (
         username
         or os.environ.get("BROKER365_ACCOUNT", "").strip()
-        or config.load_settings().get("default_account")
+        or config.default_account(PROVIDER)
     )
     if wanted:
         for a in accounts:
@@ -141,9 +140,9 @@ def is_personal(username: str | None = None) -> bool:
 def set_default(username: str) -> None:
     # store MSAL's spelling so later comparisons are exact
     name = current_account(username)["username"]
-    config.update_settings(default_account=name)
+    config.set_default_account(PROVIDER, name)
     _tokens.clear()
-    audit.record_admin("set_default", {"username": name})
+    audit.record_admin("set_default", {"provider": PROVIDER, "username": name})
 
 
 def logout(username: str | None = None) -> str:
@@ -151,9 +150,9 @@ def logout(username: str | None = None) -> str:
     app().remove_account(acct)
     _tokens.clear()
     name = acct.get("username", "")
-    if (config.load_settings().get("default_account") or "").lower() == name.lower():
-        config.update_settings(default_account=None)
-    audit.record_admin("logout", {"username": name})
+    if (config.default_account(PROVIDER) or "").lower() == name.lower():
+        config.set_default_account(PROVIDER, None)
+    audit.record_admin("logout", {"provider": PROVIDER, "username": name})
     return name
 
 
@@ -192,12 +191,14 @@ def _finish_login(result: dict[str, Any]) -> dict[str, Any]:
         raise Broker365Error(f"Sign-in failed: {desc.splitlines()[0]}")
     claims = result.get("id_token_claims", {})
     username = claims.get("preferred_username") or claims.get("email") or ""
-    settings = config.load_settings()
-    if username and not settings.get("default_account"):
-        config.update_settings(default_account=username)
+    if username:
+        config.set_default_account(PROVIDER, username, if_unset=True)
     _tokens.clear()
     granted = result.get("scope", "").split()
-    audit.record_admin("login", {"username": username, "scopes": _bundles_granted(granted)})
+    audit.record_admin(
+        "login",
+        {"provider": PROVIDER, "username": username, "scopes": _bundles_granted(granted)},
+    )
     return {
         "username": username,
         "name": claims.get("name"),
@@ -222,29 +223,13 @@ def login_interactive(bundles: list[str], port: int | None = None) -> dict[str, 
     return _finish_login(result)
 
 
-def _flow_path(flow_id: str) -> Path:
-    if not _FLOW_ID.match(flow_id):
-        raise Broker365Error("Invalid flow id")
-    return _flows_dir() / f"{flow_id}.json"
-
-
-def _flows_dir() -> Path:
-    flows = config.broker_home() / "flows"
-    flows.mkdir(exist_ok=True, mode=0o700)
-    return flows
-
-
 def device_flow_start(bundles: list[str]) -> dict[str, Any]:
     """Begin device-code sign-in. Returns the URL/code to show the user and a flow_id
     to pass to device_flow_complete (possibly from a different process)."""
-    cleanup_flows()
     flow = app().initiate_device_flow(scopes=config.scopes_for(bundles))
     if "user_code" not in flow:
         raise Broker365Error(f"Could not start device sign-in: {flow.get('error_description')}")
-    flow_id = secrets.token_urlsafe(12)
-    path = _flow_path(flow_id)
-    _private_file(path)
-    path.write_text(json.dumps(flow))
+    flow_id = flows.save(PROVIDER, flow)
     return {
         "flow_id": flow_id,
         "verification_uri": flow["verification_uri"],
@@ -254,13 +239,16 @@ def device_flow_start(bundles: list[str]) -> dict[str, Any]:
     }
 
 
-def device_flow_complete(flow_id: str, wait_seconds: float | None = None) -> dict[str, Any]:
+def device_flow_complete(
+    flow_id: str, wait_seconds: float | None = None, flow: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Wait for the user to finish device-code sign-in. With `wait_seconds`, gives up early
-    and returns {"status": "pending"} so callers with short tool timeouts can poll again."""
-    path = _flow_path(flow_id)
-    if not path.exists():
-        raise Broker365Error("Unknown or already-used flow id. Start again: broker365 login")
-    flow = json.loads(path.read_text())
+    and returns {"status": "pending"} so callers with short tool timeouts can poll again.
+    `flow` is the flow's data when the caller already loaded it (providers.login_complete)."""
+    if flow is None:
+        provider, flow = flows.load(flow_id)
+        if provider != PROVIDER:
+            raise Broker365Error(f"Flow {flow_id} is not a Microsoft sign-in")
     expires = flow.get("expires_at", 0)
     deadline = expires if wait_seconds is None else min(expires, time.time() + wait_seconds)
     result = app().acquire_token_by_device_flow(
@@ -268,11 +256,5 @@ def device_flow_complete(flow_id: str, wait_seconds: float | None = None) -> dic
     )
     if result.get("error") in ("authorization_pending", "slow_down") and time.time() < expires:
         return {"status": "pending", "flow_id": flow_id, "user_code": flow.get("user_code")}
-    path.unlink(missing_ok=True)
+    flows.consume(flow_id)
     return {"status": "signed_in", **_finish_login(result)}
-
-
-def cleanup_flows(max_age: float = 3600) -> None:
-    for f in _flows_dir().glob("*.json"):
-        if time.time() - f.stat().st_mtime > max_age:
-            f.unlink(missing_ok=True)

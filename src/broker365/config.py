@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import tempfile
 import threading
@@ -19,6 +20,9 @@ from broker365.errors import Broker365Error, PathNotAllowed
 # identifies the app, not a user. Users may override it with BROKER365_CLIENT_ID.
 PLACEHOLDER_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
 DEFAULT_CLIENT_ID = "5b97899a-d268-4f28-b4e6-3ed7ee60e65f"
+
+# Registry key of the Microsoft identity provider (default_accounts, flow files, audit, tools).
+MICROSOFT = "microsoft"
 
 AUTHORITY = "https://login.microsoftonline.com/common"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -105,11 +109,14 @@ def save_settings(settings: dict[str, Any]) -> None:
 
 
 def _modify_settings(transform: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-    """Read-modify-write config.toml under the lock; `transform` edits the dict in place."""
+    """Read-modify-write config.toml under the lock; `transform` edits the dict in place.
+    Nothing is written when `transform` leaves the settings unchanged."""
     with _settings_lock:
         settings = load_settings()
+        before = copy.deepcopy(settings)
         transform(settings)
-        save_settings(settings)
+        if settings != before:
+            save_settings(settings)
         return settings
 
 
@@ -124,6 +131,55 @@ def update_settings(**changes: Any) -> dict[str, Any]:
                 settings[key] = value
 
     return _modify_settings(apply)
+
+
+def _string_table(value: Any) -> dict[str, str]:
+    """The str -> str entries of `value`, or {} when it is not a table."""
+    if not isinstance(value, dict):
+        return {}
+    return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def _default_accounts(settings: dict[str, Any]) -> dict[str, str]:
+    """Per-provider default accounts. A legacy top-level `default_account` (before providers
+    existed) counts as Microsoft's default unless `default_accounts.microsoft` is set. A
+    hand-edited value of the wrong type is ignored (a non-table `default_accounts`, non-string
+    entries, a non-string legacy key)."""
+    accounts = {k: v for k, v in _string_table(settings.get("default_accounts")).items() if v}
+    legacy = settings.get("default_account")
+    if isinstance(legacy, str) and legacy and MICROSOFT not in accounts:
+        accounts[MICROSOFT] = legacy
+    return accounts
+
+
+def default_account(provider: str) -> str | None:
+    """The default username for `provider`, as stored (compare case-insensitively)."""
+    return _default_accounts(load_settings()).get(provider)
+
+
+def set_default_account(provider: str, username: str | None, *, if_unset: bool = False) -> None:
+    """Set (or with None, clear) `provider`'s default account under the settings lock. With
+    `if_unset`, only set it when the provider has no default yet. A change also migrates a
+    legacy `default_account` key into `default_accounts`; no change writes nothing."""
+
+    def apply(settings: dict[str, Any]) -> None:
+        current = _default_accounts(settings)
+        accounts = dict(current)
+        if username is None:
+            accounts.pop(provider, None)
+        elif not (if_unset and accounts.get(provider)):
+            accounts[provider] = username
+        stored = settings.get("default_accounts")
+        malformed = stored is not None and _string_table(stored) != stored
+        if accounts == current and not malformed:
+            return  # a malformed stored value is rewritten as a proper table
+        settings.pop("default_account", None)
+        if accounts:
+            settings["default_accounts"] = accounts
+        else:
+            settings.pop("default_accounts", None)
+
+    _modify_settings(apply)
 
 
 def set_excel_backend(username: str, backend: str) -> None:

@@ -23,6 +23,10 @@ src/broker365/
   config.py       client ID, scope bundles, broker_home(), config.toml settings, local-path sandbox
   errors.py       Broker365Error hierarchy (ConsentRequired, ReauthRequired, GraphError, ConflictError…)
   auth.py         MSAL PublicClientApplication, encrypted token cache, interactive + device-code login
+  providers/      identity-provider registry (`get`, `all`, `catalog`, `resolve`, `validate_bundles`,
+                  flow dispatch) + `Provider` protocol; microsoft.py adapts auth.py; flows.py stores
+                  pending sign-in flows for every provider. Defaults per provider in config.toml
+                  `default_accounts` (legacy `default_account` = Microsoft's, migrated on write)
   graph.py        httpx Graph client: paging, Retry-After, redirects without token, upload sessions
   services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote
   cli.py          Typer app, entry point `broker365`
