@@ -3,7 +3,7 @@ import webbrowser
 import pytest
 from starlette.testclient import TestClient
 
-from broker365 import auth, graph
+from broker365 import auth, gapi, transport
 from broker365.providers import google
 from broker365.ui import server
 
@@ -32,11 +32,15 @@ def isolated(tmp_path, monkeypatch, httpx_mock):
     monkeypatch.setenv("BROKER365_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("BROKER365_CLIENT_ID", "11111111-2222-3333-4444-555555555555")
     monkeypatch.setattr(auth, "get_token", lambda bundle, username=None: "test-token")
-    monkeypatch.setattr(graph, "_sleep", lambda s: None)
+    # Google API calls get a fake token without touching the Google provider's store (its own
+    # tests exercise GoogleProvider.get_token directly).
+    monkeypatch.setattr(gapi.GoogleClient, "_token", lambda self: "g-token")
+    monkeypatch.setattr(transport, "_sleep", lambda s: None)
     monkeypatch.setattr(webbrowser, "open", lambda *a, **k: False)  # never a real browser
     monkeypatch.setattr(google, "INTERACTIVE_TIMEOUT", 5)
-    monkeypatch.setattr(graph, "_http", None)
+    monkeypatch.setattr(transport, "_http", None)
     auth._tokens.clear()
+    auth._force_refresh.clear()
     google.reset()
     yield
 

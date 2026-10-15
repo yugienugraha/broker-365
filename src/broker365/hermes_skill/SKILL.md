@@ -1,6 +1,6 @@
 ---
 name: microsoft-365
-description: "OneDrive, Excel, Word, PowerPoint, Outlook mail/calendar/contacts, To Do via broker365."
+description: "OneDrive, Excel, Word, PowerPoint, Outlook mail/calendar/contacts, To Do and Google Drive via broker365."
 version: 0.1.0
 license: MIT
 platforms: [linux, macos, windows]
@@ -60,6 +60,24 @@ Terminal alternative: `broker365 login --provider google`.
   you get a **conflict** error, not an overwrite. Re-read the file and retry.
 - Local files are only readable/writable inside the broker365 workspace (`account_status` shows
   it). Save local files there before uploading.
+
+## Google Drive (connected Google account, scope `gdrive`)
+- Tools: `gdrive_list`, `gdrive_search` (name + full text; `raw=true` takes Drive `q` syntax),
+  `gdrive_get`, `gdrive_read_text`, `gdrive_download`, `gdrive_export`, `gdrive_upload`,
+  `gdrive_write_text`, `gdrive_mkdir`, `gdrive_move`, `gdrive_copy`, `gdrive_trash`,
+  `gdrive_share`.
+- Address items by Drive file **id** or absolute path (`/Reports/q3.pdf`, `/` = My Drive).
+  Drive allows duplicate names: if a path is ambiguous the error lists the ids; use one.
+- Google Docs/Sheets/Slides have no file content of their own: read them with
+  `gdrive_read_text` (a Sheet gives CSV of its first sheet) or save them with `gdrive_export`
+  (Docs: pdf docx odt txt md html epub rtf; Sheets: pdf xlsx ods csv tsv; Slides: pdf pptx odp
+  txt; 10 MB limit). `gdrive_download` is for ordinary files only.
+- `gdrive_upload` with `convert=true` turns docx/md/txt/html → Docs, xlsx/csv → Sheets, pptx → Slides. Name
+  conflicts: `conflict="fail"` (default), `"replace"` or `"rename"`.
+- `gdrive_trash` moves to the trash (restorable); nothing is deleted permanently.
+- `gdrive_share` is **destructive**: confirm with the user who gets which access first.
+  `type="anyone"` means anyone with the link. An address without a Google account can only
+  be shared with `notify=true` (Google emails them).
 
 ## SharePoint and OneNote
 - SharePoint (work/school accounts only, scope `sharepoint`): `sharepoint_sites`,

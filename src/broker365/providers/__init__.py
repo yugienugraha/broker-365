@@ -44,6 +44,13 @@ class Provider(Protocol):
 
     def get_token(self, bundle: str, username: str | None = None) -> str: ...
 
+    def invalidate_token(self, username: str | None = None) -> None:
+        """Make the next get_token for `username` (the account get_token would pick when
+        None) return a freshly issued access token instead of any cached one, e.g. after an
+        API rejected the token (401) or lacked a scope granted since. Other accounts keep
+        their cached tokens."""
+        ...
+
     def check_token(self, username: str) -> None:
         """Raise Broker365Error (with a user-facing reason) if `username`'s sign-in is no
         longer usable."""

@@ -19,6 +19,7 @@ from typing import Any
 from broker365 import config
 
 # Arguments that identify a target. Anything else (bodies, values, markdown, …) is omitted.
+# A tool can name more with @tool(..., audit=(...)).
 TARGET_KEYS = (
     "item", "remote_path", "local_path", "dest", "new_parent", "new_name", "path",
     "sheet", "address", "table", "name", "draft_id", "message_id", "destination_folder",
@@ -36,12 +37,17 @@ _lock = threading.Lock()
 
 
 def record(
-    tool: str, kwargs: dict[str, Any], *, result: Any = None, error: BaseException | None = None
+    tool: str,
+    kwargs: dict[str, Any],
+    *,
+    result: Any = None,
+    error: BaseException | None = None,
+    extra_keys: tuple[str, ...] = (),
 ) -> None:
     """Best effort: this runs after the operation already happened, so a logging problem must
     never surface as a failure (the agent would retry and, e.g., send a mail twice)."""
     try:
-        _append(_entry(tool, kwargs, result, error))
+        _append(_entry(tool, kwargs, result, error, extra_keys))
     except Exception:  # noqa: BLE001, S110 - deliberately swallowed, see docstring
         pass
 
@@ -63,8 +69,15 @@ def _clip(value: Any) -> Any:
     return value if isinstance(value, bool) else str(value)[:MAX_VALUE]
 
 
-def _entry(tool: str, kwargs: dict[str, Any], result: Any, error: BaseException | None) -> dict:
-    target = {k: _clip(v) for k in TARGET_KEYS if (v := kwargs.get(k)) is not None}
+def _entry(
+    tool: str,
+    kwargs: dict[str, Any],
+    result: Any,
+    error: BaseException | None,
+    extra_keys: tuple[str, ...] = (),
+) -> dict:
+    keys = TARGET_KEYS + tuple(k for k in extra_keys if k not in TARGET_KEYS)
+    target = {k: _clip(v) for k in keys if (v := kwargs.get(k)) is not None}
     for key in RECIPIENT_KEYS:
         if isinstance(value := kwargs.get(key), list | tuple) and value:
             target[f"{key}_count"] = len(value)

@@ -31,11 +31,17 @@ src/broker365/
                   `default_accounts` (legacy `default_account` = Microsoft's, migrated on write)
                   google.py: Google OAuth (loopback / dashboard callback / paste-back, PKCE,
                   state `<flow_id>.<secret>`), encrypted google_tokens.bin, refresh, revoke
+  transport.py    provider-neutral HTTP bits: pooled no-redirect client, sleep hook, retry_delay,
+                  retry limits, seg, JsonVerbs (get/post/patch over request)
   graph.py        httpx Graph client: paging, Retry-After, redirects without token, upload sessions
-  services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote
+  gapi.py         httpx Google API client: exact *.googleapis.com host allow-list, 401 refresh-once,
+                  rate-limit/5xx retries, nextPageToken paging, multipart/resumable Drive uploads
+  services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote,
+                  gdrive (Google Drive: @tool("gdrive", "google"), items by Drive id or path)
   cli.py          Typer app, entry point `broker365`
   mcp_server.py   MCP stdio server (`broker365 mcp`)
-  audit.py        JSON-lines audit.log of write tools and admin:* actions (targets only, never content)
+  audit.py        JSON-lines audit.log of write tools and admin:* actions (targets only, never content;
+                  core TARGET_KEYS + per-tool extras from @tool(..., audit=(...)))
   ui/             `broker365 ui` local dashboard: server.py (Starlette; all access checks in the `guard`
                   middleware: Host check, per-run token -> HttpOnly SameSite=Strict cookie, X-Broker365
                   header on /api) + static/ (vanilla JS, strict CSP, textContent only)

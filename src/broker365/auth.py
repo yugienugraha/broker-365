@@ -163,6 +163,9 @@ def logout(username: str | None = None) -> str:
 # Entries live at most TOKEN_MEMO_SECONDS so account switches in other processes apply soon.
 TOKEN_MEMO_SECONDS = 300
 _tokens: dict[tuple[str, str | None], tuple[str, float]] = {}
+# Accounts (lowercase usernames) whose next get_token must skip MSAL's cached access token
+# (set by forget_tokens, e.g. after an API rejected the token).
+_force_refresh: set[str] = set()
 
 
 def get_token(bundle: str, username: str | None = None) -> str:
@@ -174,8 +177,12 @@ def get_token(bundle: str, username: str | None = None) -> str:
     scopes = config.scopes_for([bundle] if bundle != "core" else [])
     # _with_error: plain acquire_token_silent folds refresh errors into None, which would
     # make a missing-consent failure indistinguishable from an expired sign-in.
-    result = app().acquire_token_silent_with_error(scopes, account=current_account(username))
+    account = current_account(username)
+    name = (account.get("username") or "").lower()
+    force = {"force_refresh": True} if name in _force_refresh else {}
+    result = app().acquire_token_silent_with_error(scopes, account=account, **force)
     if result and "access_token" in result:
+        _force_refresh.discard(name)
         ttl = min(TOKEN_MEMO_SECONDS, float(result.get("expires_in", 0)) - 120)
         if ttl > 0:
             _tokens[key] = (result["access_token"], time.time() + ttl)
@@ -183,6 +190,24 @@ def get_token(bundle: str, username: str | None = None) -> str:
     if result and any(m in json.dumps(result) for m in _CONSENT_MARKERS):
         raise ConsentRequired(bundle)
     raise ReauthRequired("Sign-in expired or revoked. Run: broker365 login")
+
+
+def forget_tokens(username: str | None = None) -> None:
+    """Make the next get_token for `username` (default: the account get_token would use)
+    fetch a fresh access token: drop that account's memo entries and have MSAL skip its
+    cached access token once (force_refresh). Other accounts are untouched."""
+    try:
+        name = (current_account(username).get("username") or "").lower()
+    except Broker365Error:
+        return  # not signed in (or no default among several): nothing is cached for it
+    try:
+        default = (current_account().get("username") or "").lower()
+    except Broker365Error:
+        default = None
+    for key in list(_tokens):
+        if (key[1].lower() if key[1] else default) == name:
+            _tokens.pop(key, None)
+    _force_refresh.add(name)
 
 
 def _finish_login(result: dict[str, Any]) -> dict[str, Any]:

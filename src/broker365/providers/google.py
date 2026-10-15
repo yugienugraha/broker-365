@@ -236,7 +236,7 @@ def _client() -> dict[str, str]:
 
 
 def _client_http() -> httpx.Client:
-    """One pooled client for the token and revoke endpoints (like graph.http())."""
+    """One pooled client for the token and revoke endpoints (like transport.http())."""
     global _http
     if _http is None:
         _http = httpx.Client(timeout=30)
@@ -426,6 +426,16 @@ def _memo_hit(key: str) -> str | None:
     return hit[0] if hit and hit[1] > time.time() else None
 
 
+def forget_token(username: str | None = None) -> None:
+    """Drop the memoized access token of `username` (default: the default account) so the
+    next get_token refreshes it, e.g. after a Google API rejected it with 401."""
+    try:
+        key = _account(username)["email"].lower()
+    except Broker365Error:
+        return
+    _tokens.pop(key, None)
+
+
 def _exchange(code: str, verifier: str, redirect_uri: str) -> dict[str, Any]:
     """Trade an authorization code for tokens, store the account, return its description."""
     body = _token_request(
@@ -589,6 +599,9 @@ class GoogleProvider:
                 raise Broker365Error(f"Google token refresh failed: {_error_text(body)}")
             _memo(key, body)
             return body["access_token"]
+
+    def invalidate_token(self, username: str | None = None) -> None:
+        forget_token(username)
 
     def check_token(self, username: str) -> None:
         self.get_token("core", username)

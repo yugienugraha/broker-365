@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
+import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 
 from broker365 import config, graph
 from broker365.errors import Broker365Error, GraphError
@@ -130,11 +133,29 @@ def _folder_id(folder: str) -> str:
 
 
 def write_local(path: str | None, default_name: str, data: bytes, overwrite: bool) -> str:
+    """Save bytes to a sandboxed local path (see stream_local)."""
+    return stream_local(path, default_name, overwrite, lambda out: out.write(data))
+
+
+def stream_local(
+    path: str | None, default_name: str, overwrite: bool, fill: Callable[[BinaryIO], Any]
+) -> str:
+    """Like write_local for content that arrives in pieces: `fill` writes into a temporary
+    file in the destination folder, which then replaces the destination, so a failed or
+    oversized download leaves nothing behind."""
     dest = config.resolve_local(path, default_name)
     if dest.exists() and not overwrite:
         raise Broker365Error(f"{dest} already exists (pass overwrite=true to replace it)")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
+    fd, tmp = tempfile.mkstemp(prefix=".broker365-", suffix=".part", dir=dest.parent)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            fill(out)
+        os.replace(tmp, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     return str(dest)
 
 

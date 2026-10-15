@@ -15,15 +15,13 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from broker365 import auth, config
+from broker365 import auth, config, transport
 from broker365.errors import Broker365Error, GraphError, NetworkError
+from broker365.transport import IDEMPOTENT, MAX_RETRIES, MAX_TOTAL_WAIT
 
-MAX_RETRIES = 4
 RETRY_STATUSES = {429, 503, 504}
-IDEMPOTENT = {"GET", "PUT", "DELETE", "HEAD"}
 SAFE = {"GET", "HEAD"}  # pure reads: also retried on 500/502 (seen live: OneNote "transient")
 TRANSIENT_STATUSES, TRANSIENT_RETRIES, TRANSIENT_DELAY = {500, 502}, 2, 1.0
-MAX_TOTAL_WAIT = 120.0  # cap on time spent retrying one request across all tiers
 SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 UPLOAD_CHUNK = 320 * 1024 * 32  # 10 MiB; must be a multiple of 320 KiB
 PAGE_MAX = 100
@@ -32,15 +30,7 @@ PAGE_MAX = 100
 LOCK_WAIT, LOCK_RETRY = 60.0, 5.0
 GRAPH_HOST = urlsplit(config.GRAPH_BASE).netloc
 
-_sleep = time.sleep  # patched in tests
-_http: httpx.Client | None = None
-
-
-def http() -> httpx.Client:
-    global _http
-    if _http is None:
-        _http = httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0), follow_redirects=False)
-    return _http
+seg = transport.seg  # used by the Microsoft services as graph.seg
 
 
 def item_ref(item: str, drive: str = "/me/drive") -> str:
@@ -52,13 +42,6 @@ def item_ref(item: str, drive: str = "/me/drive") -> str:
         path = item.rstrip("/")
         return f"{drive}/root" if not path else f"{drive}/root:{quote(path)}:"
     return f"{drive}/items/{quote(item, safe='!')}"
-
-
-def seg(value: str, what: str = "id") -> str:
-    """One URL path segment (message/event/task id, …), validated and fully quoted."""
-    if not value:
-        raise Broker365Error(f"A {what} is required")
-    return quote(value, safe="")
 
 
 def odata_str(value: str) -> str:
@@ -82,25 +65,21 @@ def _send(
     attempt, lock_deadline = 0, start + LOCK_WAIT
     while True:
         try:
-            resp = http().request(method, url, headers=headers, **kw)
+            resp = transport.http().request(method, url, headers=headers, **kw)
         except httpx.HTTPError as exc:
             raise NetworkError(f"Network error talking to Microsoft: {type(exc).__name__}") from exc
         if time.monotonic() - start > MAX_TOTAL_WAIT:
             break  # overall cap across all retry tiers
         if resp.status_code == 423 and time.monotonic() < lock_deadline:
-            _sleep(LOCK_RETRY)
+            transport._sleep(LOCK_RETRY)
             continue
         if resp.status_code in TRANSIENT_STATUSES and transient_left:
             transient_left -= 1
-            _sleep(TRANSIENT_DELAY)
+            transport._sleep(TRANSIENT_DELAY)
             continue
         if resp.status_code not in retry_on or attempt == MAX_RETRIES:
             break
-        try:
-            delay = float(resp.headers.get("Retry-After", ""))
-        except ValueError:
-            delay = 2.0**attempt
-        _sleep(min(delay, 60.0))
+        transport._sleep(transport.retry_delay(resp, attempt))
         attempt += 1
     if resp.is_error:
         raise GraphError.from_response(resp)
@@ -115,7 +94,7 @@ def fetch(url: str) -> bytes:
     return resp.content
 
 
-class GraphClient:
+class GraphClient(transport.JsonVerbs):
     def __init__(self, bundle: str):
         self.bundle = bundle
 
@@ -132,21 +111,6 @@ class GraphClient:
     ) -> httpx.Response:
         hdrs = {"Authorization": f"Bearer {auth.get_token(self.bundle)}", **(headers or {})}
         return _send(method, self._url(path), hdrs, **kw)
-
-    def _json(self, method: str, path: str, **kw: Any) -> Any:
-        resp = self.request(method, path, **kw)
-        if resp.status_code == 204 or not resp.content:
-            return None
-        return resp.json()
-
-    def get(self, path: str, **kw: Any) -> Any:
-        return self._json("GET", path, **kw)
-
-    def post(self, path: str, json: Any = None, **kw: Any) -> Any:
-        return self._json("POST", path, json=json, **kw)
-
-    def patch(self, path: str, json: Any = None, **kw: Any) -> Any:
-        return self._json("PATCH", path, json=json, **kw)
 
     def delete(self, path: str, **kw: Any) -> None:
         self.request("DELETE", path, **kw)

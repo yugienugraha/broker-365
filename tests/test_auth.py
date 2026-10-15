@@ -20,8 +20,8 @@ class FakeApp:
     def get_accounts(self):
         return self.accounts
 
-    def acquire_token_silent_with_error(self, scopes, account):
-        self.last_scopes = scopes
+    def acquire_token_silent_with_error(self, scopes, account, force_refresh=False):
+        self.last_scopes, self.last_force = scopes, force_refresh
         return self.silent
 
     def initiate_device_flow(self, scopes):
@@ -141,7 +141,9 @@ def test_token_memo_avoids_repeat_msal_calls(fake):
     app = fake(accounts=[ALICE], silent={"access_token": "tok", "expires_in": 3600})
     calls = []
     real = app.acquire_token_silent_with_error
-    app.acquire_token_silent_with_error = lambda s, account: calls.append(s) or real(s, account)
+    app.acquire_token_silent_with_error = lambda s, account, **kw: (
+        calls.append(s) or real(s, account, **kw)
+    )
     assert REAL_GET_TOKEN("files") == REAL_GET_TOKEN("files") == "tok"
     assert len(calls) == 1
     auth.logout()
@@ -171,3 +173,36 @@ def test_account_type_comes_from_home_account_id_not_realm(fake):
 def test_tenant_falls_back_to_a_real_realm_but_never_common():
     assert auth._tenant({"realm": MSA}) == MSA
     assert auth._tenant({"realm": "common"}) == ""
+
+
+def test_invalidate_token_forces_one_fresh_msal_token(fake, monkeypatch):
+    from broker365 import providers
+
+    app = fake(accounts=[ALICE], silent={"access_token": "tok", "expires_in": 3600})
+    assert REAL_GET_TOKEN("files") == "tok" and app.last_force is False
+    providers.get("microsoft").invalidate_token()  # default account = the only one
+    assert not auth._tokens
+    app.silent = {"access_token": "fresh", "expires_in": 3600}
+    assert REAL_GET_TOKEN("files") == "fresh" and app.last_force is True
+    auth._tokens.clear()
+    REAL_GET_TOKEN("files")
+    assert app.last_force is False  # one-shot
+
+
+def test_invalidate_token_leaves_other_accounts_alone(fake, monkeypatch):
+    from broker365 import providers
+
+    fake(accounts=[ALICE, BOB], silent={"access_token": "tok", "expires_in": 3600})
+    config.set_default_account("microsoft", "bob@outlook.com")
+    auth._tokens.update(
+        {
+            ("files", "alice@contoso.com"): ("a1", 1e12),
+            ("files", "BOB@outlook.com"): ("b1", 1e12),
+            ("files", None): ("b2", 1e12),  # memoized for the default account (Bob)
+        }
+    )
+    providers.get("microsoft").invalidate_token()
+    assert list(auth._tokens) == [("files", "alice@contoso.com")]
+    assert auth._force_refresh == {"bob@outlook.com"}
+    providers.get("microsoft").invalidate_token("Alice@Contoso.com")
+    assert auth._tokens == {} and auth._force_refresh == {"bob@outlook.com", "alice@contoso.com"}

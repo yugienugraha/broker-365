@@ -28,10 +28,18 @@ class ConsentRequired(Broker365Error):
         )
 
 
-class GraphError(Broker365Error):
+class ApiError(Broker365Error):
+    """An error answer from a provider's API: HTTP status, error code/reason, message."""
+
+    service = "API"
+
     def __init__(self, status: int, code: str, message: str):
         self.status, self.code, self.message = status, code, message
-        super().__init__(f"Graph {status} {code}: {message}")
+        super().__init__(f"{self.service} {status} {code}: {message}")
+
+
+class GraphError(ApiError):
+    service = "Graph"
 
     @classmethod
     def from_response(cls, resp: httpx.Response) -> GraphError:
@@ -55,8 +63,14 @@ class ConflictError(GraphError):
     """The file changed since it was read (eTag mismatch); nothing was overwritten."""
 
 
+class GoogleApiError(ApiError):
+    """An error answer from a Google API (status, reason, Google's message)."""
+
+    service = "Google"
+
+
 class NetworkError(Broker365Error):
-    """Could not reach Microsoft (DNS, TLS, timeout, connection reset)."""
+    """Could not reach Microsoft or Google (DNS, TLS, timeout, connection reset)."""
 
 
 class ReadOnlyMode(Broker365Error):

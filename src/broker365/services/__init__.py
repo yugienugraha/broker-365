@@ -1,4 +1,4 @@
-"""One module per Microsoft 365 product. Plain sync functions returning JSON-able values,
+"""One module per Microsoft 365 / Google product. Plain sync functions returning JSON-able values,
 registered with `@tool` so the CLI (`broker365 call`) and the MCP server expose the same set.
 """
 
@@ -25,6 +25,7 @@ SERVICE_MODULES = (
     "tasks",
     "sharepoint",
     "onenote",
+    "gdrive",
 )
 
 
@@ -36,6 +37,7 @@ class Tool:
     writes: bool
     destructive: bool
     provider: str = config.MICROSOFT
+    audit: tuple[str, ...] = ()  # argument names logged besides audit.TARGET_KEYS
 
     @property
     def description(self) -> str:
@@ -51,14 +53,16 @@ def tool(
     *,
     writes: bool = False,
     destructive: bool = False,
+    audit: tuple[str, ...] = (),
 ):
     """Register a service function. `bundle` is a scope bundle of `provider`. `writes` tools
     are hidden in read-only mode; `destructive` tools (delete/send/share/overwrite) are
-    flagged to MCP clients."""
+    flagged to MCP clients. `audit` names extra arguments that identify a write's target
+    (logged in addition to audit.TARGET_KEYS; never content)."""
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
         TOOLS[fn.__name__] = Tool(
-            fn.__name__, fn, bundle, writes or destructive, destructive, provider
+            fn.__name__, fn, bundle, writes or destructive, destructive, provider, audit
         )
         return fn
 
@@ -96,7 +100,7 @@ def tool_catalog() -> list[dict[str, Any]]:
     ]
 
 
-def call(name: str, **kwargs: Any) -> Any:
+def call(name: str, /, **kwargs: Any) -> Any:
     tools = load_all()
     if name not in tools:
         raise Broker365Error(f"Unknown tool '{name}'. List them with: broker365 tools")
@@ -111,8 +115,8 @@ def call(name: str, **kwargs: Any) -> Any:
         result = t.fn(**kwargs)
     except Exception as exc:
         if t.writes:
-            audit.record(name, kwargs, error=exc)
+            audit.record(name, kwargs, error=exc, extra_keys=t.audit)
         raise
     if t.writes:
-        audit.record(name, kwargs, result=result)
+        audit.record(name, kwargs, result=result, extra_keys=t.audit)
     return result

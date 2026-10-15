@@ -34,6 +34,9 @@ class MicrosoftProvider:
     def get_token(self, bundle: str, username: str | None = None) -> str:
         return auth.get_token(bundle, username)
 
+    def invalidate_token(self, username: str | None = None) -> None:
+        auth.forget_tokens(username)
+
     def check_token(self, username: str) -> None:
         auth.get_token("core", username)
 

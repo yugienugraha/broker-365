@@ -18,21 +18,22 @@ from broker365 import __version__, services
 from broker365.errors import Broker365Error
 
 INSTRUCTIONS = """\
-Microsoft 365 (OneDrive, Excel, Word, PowerPoint, Outlook mail/calendar/contacts, To Do);
-Google accounts can be connected too (sign-in only for now).
-- If a tool says the user isn't signed in or a permission isn't granted, call
-  account_login_start with the needed scopes (and provider). For kind 'device_code'
-  (Microsoft) show the user the URL and code, then poll account_login_complete until status is
-  'signed_in'.
-- For kind 'authorize_url' (provider="google"), send the user authorize_url and the
-  instructions; they approve, land on a "site can't be reached" page and paste its full
-  address-bar URL back. Call account_login_complete(flow_id, redirect_url=<that URL>). Don't
-  repeat the pasted URL to anyone: it holds a one-time code.
-- Files are addressed by absolute OneDrive path ('/Documents/report.docx') or item id.
-- Word/PowerPoint (and Excel on some personal accounts) are edited by download→edit→upload;
-  if someone changed the file meanwhile you get a conflict instead of an overwrite.
-- mail_send/mail_reply/mail_forward create a draft by default. Show it to the user and, after
-  they approve, send exactly that draft with mail_send_draft(draft_id).
+Microsoft 365 (OneDrive, Excel, Word, PowerPoint, Outlook, To Do) and Google (tools prefixed
+g*, e.g. gdrive_*) for the user's signed-in accounts. Each tool's description has the details.
+- Files are addressed by absolute path ('/Documents/report.docx'; '/' = root / My Drive) or
+  by id. If a path is ambiguous (Google Drive allows duplicate names), use the id it lists.
+- Not signed in or a permission missing: call account_login_start with the needed scopes (and
+  provider). For kind 'device_code' (Microsoft) show the user the URL and code, then poll
+  account_login_complete until status is 'signed_in'. For kind 'authorize_url'
+  (provider="google") send the user authorize_url and the instructions; they approve, land on
+  a "site can't be reached" page and paste its full address-bar URL back. Call
+  account_login_complete(flow_id, redirect_url=<that URL>) and never repeat that URL: it holds
+  a one-time code.
+- Tools marked destructive (delete, trash, send, share, invite) need the user's explicit
+  go-ahead first. Mail send/reply/forward create a draft by default: show it, and after
+  approval send exactly that draft with mail_send_draft(draft_id).
+- A conflict error means the file changed meanwhile: re-read it and retry; nothing was
+  overwritten.
 """
 
 

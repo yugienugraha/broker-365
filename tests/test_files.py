@@ -296,3 +296,19 @@ def test_get_retries_transient_502(httpx_mock):
     httpx_mock.add_response(url=url, status_code=502)
     httpx_mock.add_response(url=url, json=ITEM)
     assert files.files_get("ABC!1")["id"] == "ABC!1"
+
+
+def test_write_local_is_atomic_and_keeps_overwrite_rule(monkeypatch):
+    target = config.workspace() / "r.txt"
+    target.write_bytes(b"old")
+    with pytest.raises(Exception, match="overwrite=true"):
+        files.write_local("r.txt", "r.txt", b"new", overwrite=False)
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(files.os, "replace", boom)
+    with pytest.raises(OSError):
+        files.write_local("r.txt", "r.txt", b"new", overwrite=True)
+    assert target.read_bytes() == b"old"  # untouched, and no temp file left behind
+    assert sorted(p.name for p in config.workspace().iterdir()) == ["r.txt"]

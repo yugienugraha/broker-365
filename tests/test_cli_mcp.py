@@ -30,6 +30,27 @@ def test_call_rejects_bad_args():
     assert "Bad arguments" in result.output
 
 
+def test_call_passes_a_name_argument_through(monkeypatch):
+    # gdrive_upload takes `name`; it must not collide with call()'s own tool-name parameter.
+    seen = {}
+    t = services.load_all()["gdrive_upload"]
+    monkeypatch.setitem(
+        services.TOOLS, "gdrive_upload", t.__class__(**{**t.__dict__, "fn": _spy(t.fn, seen)})
+    )
+    services.call("gdrive_upload", local_path="x.csv", name="Report")
+    assert seen == {"local_path": "x.csv", "name": "Report"}
+
+
+def _spy(fn, seen):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(**kwargs):
+        seen.update(kwargs)
+
+    return wrapper
+
+
 def test_call_unknown_tool():
     result = runner.invoke(app, ["call", "does_not_exist"])
     assert result.exit_code == 1

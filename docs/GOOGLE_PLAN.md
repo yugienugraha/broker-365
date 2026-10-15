@@ -5,7 +5,8 @@
 > signs in, tokens stay local, and Hermes gets tools through the same MCP server, CLI and
 > dashboard.
 >
-> Status: G0–G2 done (2026-10-15): sign-in, token storage/refresh and revoke; no Google tools yet.
+> Status: G0–G2 done (2026-10-15): sign-in, token storage/refresh and revoke. G3 (Drive tools)
+> implemented with mocked tests; live smoke pending.
 > Facts below were checked against Google's current docs via
 > Context7 (Identity OAuth 2.0, Drive, Gmail and Sheets API docs, google-auth-library-python).
 
@@ -148,7 +149,7 @@ Safety rules carry over unchanged:
 | G0 ✅ | Publisher GCP project + Desktop client (§2) | Done 2026-10-15, see §2a |
 | G1 ✅ | `providers/` abstraction; Microsoft moved behind it with **no behaviour change**; per-provider default account + settings migration | Done 2026-10-15: `providers/` registry + Microsoft adapter, `default_accounts` (legacy key migrated on next write), `provider` on accounts/flows/tools/audit/CLI/dashboard; existing 201 tests pass (assertions only gained `provider` / `default_accounts`) |
 | G2 ✅ (code) | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart. Implemented 2026-10-15, see §8a; live sign-in still to be checked by the owner |
-| G3 | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export |
+| G3 ✅ | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export. Done 2026-10-15, live-verified on a personal Gmail account, see §8b |
 | G4 | Sheets, Docs, Slides tools (native batchUpdate) | Live smoke: create sheet, write formulas, read back computed values; doc from Markdown; slides from outline |
 | G5 | Gmail, Calendar, Tasks, Contacts | Live smoke (read-only on real mail; draft-only send test) |
 | G6 | Dashboard provider tabs, Hermes skill + MCP instructions update, docs | Browser test of both providers; `hermes install` registers one server exposing both |
@@ -183,6 +184,62 @@ Safety rules carry over unchanged:
   clears the memo and the default.
 - Tests: `tests/test_google.py` (Google endpoints mocked; the loopback callback is a real
   request to 127.0.0.1).
+
+## 8b. G3 result (2026-10-15)
+- `gapi.py`: `GoogleClient(bundle, username=None)`, token from the Google provider. The token
+  goes only over https to the exact hosts `www`, `sheets`, `docs`, `slides`, `gmail`, `people`
+  and `tasks` `.googleapis.com` (lookalikes, http, explicit ports and userinfo are refused
+  before sending). It shares `transport.py` with graph.py (pooled client that never follows
+  redirects, sleep hook, `retry_delay`, retry limits, `seg`, the `JsonVerbs` get/post/patch
+  mixin); each keeps its own retry loop. Download redirects are fetched without the token,
+  https only.
+- Retries: 429 and 403 `rateLimitExceeded`/`userRateLimitExceeded` for any method;
+  500/502/503/504 for GET/PUT/DELETE/HEAD or `idempotent=True`; Retry-After or exponential
+  backoff, at most `transport.MAX_RETRIES` retries and `transport.MAX_TOTAL_WAIT`. 401:
+  `Provider.invalidate_token` (Google: drop the memoized token; Microsoft: drop the
+  account's memo and force one MSAL refresh) and one retry with a fresh token, then
+  `ReauthRequired`. A missing-scope 403 gets the same single retry (the memo may predate a
+  grant made in another process) before `ConsentRequired`. 403 `insufficientPermissions` /
+  `ACCESS_TOKEN_SCOPE_INSUFFICIENT` becomes `ConsentRequired(bundle, "google")`. Other errors
+  become `GoogleApiError` (404 "not found or no access"); it and `GraphError` share the
+  `ApiError` base. No If-Match yet, so no Google conflict error (G4 if needed). The error
+  code is the first `errors[].reason`, else the first `details[].reason`, else `status`.
+- Uploads: multipart up to 5 MB, else a resumable session (8 MiB chunks; a 308's `Range`
+  gives the next offset), read from the local file chunk by chunk. A chunk that fails (5xx or
+  network) is not resent blindly: the session status is queried (`bytes */size`) and the
+  upload resumes from Google's Range, with bounded backoff; 404/410 = session expired. The
+  session URI must pass the allow-list. `gdrive_download` streams into a temporary file next to the sandboxed
+  destination and renames it into place (size cap; nothing left behind on failure);
+  `gdrive_read_text` and exports read into memory with a cap (read_text truncates).
+- Path walks start at the `root` alias (no lookup); existence/ambiguity probes ask only for
+  `id,name,mimeType,driveId`. Folder-scoped queries use `corpora=drive&driveId=…` for a
+  shared-drive folder, else `corpora=user`; only `gdrive_search` uses `allDrives`. An
+  `incompleteSearch` makes path resolution and probes fail ("use the id"); `gdrive_search`
+  then returns `{"files": [...], "incompleteSearch": true, "note": …}` instead of a list.
+  `conflict="rename"` reads the folder's names once (`name contains` matches tokens only).
+  `convert=true` with `conflict="replace"` on an existing file is refused (rename or trash).
+- Local files: `files.write_local` and `gdrive_download`/`gdrive_export` all go through
+  `files.stream_local` (sandbox check, overwrite rule, temp file + `os.replace`).
+- Sharing with an address that has no Google account while `notify=false` (Drive 400
+  `invalidSharingRequest`) explains that Google requires `notify=true`.
+- Audit: the core `audit.TARGET_KEYS` plus per-tool extras declared with
+  `@tool(..., audit=(...))` (upload: remote_folder/conflict/convert; write_text: conflict;
+  share: email/role/type/domain; who got access is a target, the message is not logged).
+- `services/gdrive.py`: 13 tools on bundle `gdrive` (full Drive). Items by id or absolute path,
+  resolved name by name (intermediate parts must be folders; an ambiguous name lists the ids).
+  Every call sends `supportsAllDrives=true`; listings and searches add
+  `includeItemsFromAllDrives=true&corpora=allDrives`. No `account` argument: like the Microsoft
+  tools, they use the provider's default account. Trash is `files.update trashed=true`; share
+  allows reader/commenter/writer only.
+- **Live smoke (2026-10-15, personal Gmail, 41/41 + conversions):** mkdir (idempotent), list,
+  write/read text, conflict fail/replace/rename, 12 MB resumable upload and byte-identical
+  download, convert csv → Sheet and md/txt/html → Doc (Markdown keeps headings and bold), native
+  download refused, Sheet export xlsx/pdf/csv/ods, Doc export docx/pdf/md/html/txt/odt/rtf/epub,
+  full-text and raw search, get, copy, move+rename, not-found, sandbox refusal, trash.
+  Findings: Google's text/plain export starts with a UTF-8 BOM (stripped); the tool argument
+  `name` collided with `services.call(name, ...)` (now positional-only).
+- Not verified live: `gdrive_share` (it shares with real people), `corpora=allDrives` on a
+  Workspace account with shared drives, `replace` onto a native file.
 
 Each milestone follows the existing process: tests, then `/simplify`, `/code-review`,
 `/security-review`, then commit and push to `main`.

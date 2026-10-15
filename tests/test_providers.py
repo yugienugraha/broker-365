@@ -219,7 +219,10 @@ def test_cli_login_start_and_complete(fake):
 
 def test_tool_catalog_provider_field():
     catalog = services.tool_catalog()
-    assert catalog and all(t["provider"] == "microsoft" for t in catalog)
+    assert catalog and all(
+        t["provider"] == ("google" if t["name"].startswith("gdrive_") else "microsoft")
+        for t in catalog
+    )
     assert services.load_all()["account_status"].provider == "microsoft"
 
 
