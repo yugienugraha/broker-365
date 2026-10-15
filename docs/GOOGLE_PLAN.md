@@ -37,6 +37,21 @@
 5. **Clients → Create client → Application type: Desktop app**. Copy the client ID and client secret. Desktop clients accept any loopback port, so no redirect URI needs to be registered.
 6. Put both into `config.py` as `DEFAULT_GOOGLE_CLIENT_ID` / `DEFAULT_GOOGLE_CLIENT_SECRET`. Users can override them with env `BROKER365_GOOGLE_CLIENT_ID` / `BROKER365_GOOGLE_CLIENT_SECRET`, or bring their own Internal client for a Workspace org.
 
+## 2a. G0 result (done 2026-10-15)
+- **Google account:** `yugienugraha26@gmail.com` (the owner's other account was at its project quota). **Project:** `broker365` (number 174513608376).
+- **APIs enabled:** Drive, Sheets, Docs, Slides, Gmail, Calendar, People, Tasks.
+- **Consent screen:**
+  - app name `broker365`, user type **External**, publishing status **In production** (unverified);
+  - home <https://broker365.sultantech.id>, privacy `/privacy`, terms `/terms`;
+  - authorised domain `sultantech.id`;
+  - the public pages live in `site/` and are deployed on Vercel.
+- **OAuth client:**
+  - type **Desktop app**, named `broker365 desktop`;
+  - client ID `174513608376-4ehppkiqu1pt356n4ov8o7f0tk96ei8i.apps.googleusercontent.com`;
+  - the secret is stored locally in `~/.broker365-live/google_client.json` (mode 600, outside the repo) until G2 builds it in;
+  - the new "Use this client for an AI-powered agent" option was left **off**.
+- **Scopes:** not pre-registered under Data access. They are only needed for verification; unverified apps can request them at sign-in.
+
 ## 3. Sign-in design (the hard part)
 
 Google only supports loopback redirects for these scopes, so the redirect must land on
@@ -129,7 +144,7 @@ Safety rules carry over unchanged:
 
 | # | Scope | Done when |
 |---|---|---|
-| G0 | Publisher GCP project + Desktop client (§2) | Client ID/secret available; app **In production** |
+| G0 ✅ | Publisher GCP project + Desktop client (§2) | Done 2026-10-15, see §2a |
 | G1 | `providers/` abstraction; Microsoft moved behind it with **no behaviour change**; per-provider default account + settings migration | All existing tests (201) pass unchanged |
 | G2 | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart |
 | G3 | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export |
