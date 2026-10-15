@@ -450,3 +450,10 @@ def test_discard_draft_moves_it_to_trash(httpx_mock):
     assert services.load_all()["gmail_discard_draft"].writes
     assert not services.load_all()["gmail_discard_draft"].destructive
     assert "gmail_discard_draft" in gmail.DRAFT_NOTE
+
+
+@pytest.mark.parametrize("label", ["TRASH", "spam"])
+def test_label_refuses_trash_and_spam(httpx_mock, label):
+    with pytest.raises(Broker365Error, match="gmail_trash"):
+        gmail.gmail_label("M1", add=[label])
+    assert httpx_mock.get_requests() == []

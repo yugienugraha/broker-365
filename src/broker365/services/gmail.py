@@ -458,6 +458,9 @@ def gmail_label(
     if not to_add and not to_remove:
         raise Broker365Error("Nothing to change: pass add, remove, mark_read or archive")
     ids = _label_ids(to_add + to_remove)
+    if {"TRASH", "SPAM"} & set(ids[: len(to_add)]):
+        # Trashing is destructive and needs its own confirmation: keep it out of a writes tool.
+        raise Broker365Error("Trash and Spam are not label changes here: use gmail_trash")
     body = {"addLabelIds": ids[: len(to_add)], "removeLabelIds": ids[len(to_add) :]}
     m = _g().post(_msg_url(message_id, "/modify"), json=body)
     return {"id": message_id, "labels": (m or {}).get("labelIds")}

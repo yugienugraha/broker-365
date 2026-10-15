@@ -614,3 +614,14 @@ def test_paged_explicit_page_parameter_wins(httpx_mock):
     httpx_mock.add_response(url=re.compile(re.escape(FILE_URL) + r"\?.*"), json={})
     g().paged(FILE_URL, None, "x", limit=50, size_param="maxResults", page_max=10)
     assert httpx_mock.get_requests()[0].url.params["maxResults"] == "10"
+
+
+@pytest.mark.parametrize("value", [".", "..", "..."])
+def test_seg_refuses_dot_segments(value):
+    # httpx would collapse ".../events/.." onto the parent resource (e.g. a whole calendar).
+    with pytest.raises(Broker365Error, match="Invalid"):
+        transport.seg(value)
+
+
+def test_seg_keeps_ids_with_dots():
+    assert transport.seg("a.b") == "a.b" and transport.seg(".x") == ".x"

@@ -48,6 +48,10 @@ def seg(value: str | None, what: str = "id") -> str:
     """One URL path segment (message/event/file id, …), validated and fully quoted."""
     if not value:
         raise Broker365Error(f"A {what} is required")
+    # quote() leaves "." and ".." alone and httpx then removes them as dot segments, which
+    # would turn e.g. DELETE .../events/.. into DELETE on the parent (a whole calendar).
+    if not value.strip("."):
+        raise Broker365Error(f"Invalid {what}: {value!r}")
     return quote(value, safe="")
 
 
