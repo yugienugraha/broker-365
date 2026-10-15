@@ -21,7 +21,7 @@ from broker365 import config
 from broker365.errors import Broker365Error
 
 MAX_AGE = 3600  # seconds a flow file is kept
-_FLOW_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+_FLOW_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
 
 def _dir() -> Path:
@@ -31,7 +31,7 @@ def _dir() -> Path:
 
 
 def _path(flow_id: str) -> Path:
-    if not isinstance(flow_id, str) or not _FLOW_ID.match(flow_id):
+    if not isinstance(flow_id, str) or not _FLOW_ID.fullmatch(flow_id):
         raise Broker365Error("Invalid flow id")
     return _dir() / f"{flow_id}.json"
 
