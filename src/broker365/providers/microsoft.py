@@ -15,13 +15,20 @@ class MicrosoftProvider:
         "To revoke the app entirely: https://myapps.microsoft.com "
         "(work) or https://account.live.com/consent/Manage (personal)."
     )
+    available = True  # the built-in public client always works (no secret to configure)
+    callback_path = None  # device code / MSAL's own loopback: no redirect to the dashboard
+    restricted_bundles: frozenset[str] = frozenset()
 
     def bundles(self) -> dict[str, list[str]]:
         return {b: list(config.SCOPE_BUNDLES[b]) for b in config.user_bundles()}
 
+    def default_bundles(self) -> list[str]:
+        return config.user_bundles()[:1]
+
     def list_accounts(self) -> list[dict[str, Any]]:
         return [
-            {**a, "provider": self.name, "provider_label": self.label} for a in auth.list_accounts()
+            {**a, "provider": self.name, "provider_label": self.label, "tenant_label": "Tenant"}
+            for a in auth.list_accounts()
         ]
 
     def get_token(self, bundle: str, username: str | None = None) -> str:
@@ -30,7 +37,9 @@ class MicrosoftProvider:
     def check_token(self, username: str) -> None:
         auth.get_token("core", username)
 
-    def login_start(self, bundles: list[str]) -> dict[str, Any]:
+    def login_start(self, bundles: list[str], redirect_uri: str | None = None) -> dict[str, Any]:
+        """Device-code sign-in; `redirect_uri` is ignored (callback_path is None, so it is never
+        passed)."""
         flow = auth.device_flow_start(bundles)
         uri, code = flow.get("verification_uri"), flow.get("user_code")
         return {
@@ -57,6 +66,9 @@ class MicrosoftProvider:
                 "user enters the code; call again with just flow_id."
             )
         return auth.device_flow_complete(flow_id, wait_seconds=wait_seconds, flow=data)
+
+    def complete_callback(self, params: dict[str, list[str]]) -> dict[str, Any]:
+        raise Broker365Error("Microsoft sign-in has no redirect callback")
 
     def login_interactive(self, bundles: list[str], port: int | None = None) -> dict[str, Any]:
         return auth.login_interactive(bundles, port)

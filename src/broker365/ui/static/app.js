@@ -279,7 +279,17 @@ const BUNDLES = {
   contacts: { label: 'Contacts', desc: 'Your Outlook address book' },
   tasks: { label: 'To Do', desc: 'Microsoft To Do lists and tasks' },
   onenote: { label: 'OneNote', desc: 'Notebooks, sections and pages' },
+  gdrive: { label: 'Drive', desc: 'All files in your Google Drive' },
+  'gdrive-app': { label: 'Drive (app files only)', desc: 'Only files broker365 created or opened' },
+  gsheets: { label: 'Sheets', desc: 'Read and edit Google Sheets' },
+  gdocs: { label: 'Docs', desc: 'Read and edit Google Docs' },
+  gslides: { label: 'Slides', desc: 'Read and edit Google Slides' },
+  gmail: { label: 'Gmail', desc: 'Read, label and draft mail (no permanent delete)' },
+  gcalendar: { label: 'Calendar', desc: 'Google Calendar events' },
+  gcontacts: { label: 'Contacts', desc: 'Your Google contacts' },
+  gtasks: { label: 'Tasks', desc: 'Google Tasks lists and tasks' },
 };
+const RESTRICTED_NOTE = 'Restricted scope: Google shows an unverified-app warning. Choose Advanced, then Go to broker365.';
 const BUNDLE_ORDER = Object.keys(BUNDLES);
 
 function bundleLabel(key) {
@@ -294,6 +304,8 @@ function providerLabel(p) {
 function accountTypeBadge(type) {
   if (type === 'personal') return badge('Personal', 'slate');
   if (type === 'work_or_school') return badge('Work or school', 'slate');
+  if (type === 'google') return badge('Google account', 'slate');
+  if (type === 'workspace') return badge('Google Workspace', 'slate');
   return badge(type ? String(type) : 'Unknown');
 }
 
@@ -407,7 +419,7 @@ async function renderOverview(view, ctx) {
       ? h('p', null, unhealthy.length
         ? badge(`${unhealthy.length} need${unhealthy.length === 1 ? 's' : ''} sign-in`, 'bad')
         : badge('All signed in', 'ok'))
-      : h('p', { class: 'muted' }, 'Connect a Microsoft account so Hermes can reach your files.'),
+      : h('p', { class: 'muted' }, 'Connect a Microsoft or Google account so Hermes can reach your files.'),
     h('div', { class: 'actions' }, h('a', { class: 'btn small', href: '#/accounts' }, accounts.length ? 'Manage accounts' : 'Connect an account')),
   );
 
@@ -489,14 +501,14 @@ async function renderAccounts(view, ctx) {
   const connectHost = h('div', { class: 'panel' }, h('p', { class: 'loading' }, 'Loading permissions…'));
 
   replace(view,
-    pageHead('Accounts', 'Microsoft accounts broker365 can act for. Tokens stay on this machine.'),
+    pageHead('Accounts', 'Microsoft and Google accounts broker365 can act for. Tokens stay on this machine.'),
     h('section', { 'aria-labelledby': 'acc-list' },
       h('h2', { id: 'acc-list', class: 'visually-hidden' }, 'Connected accounts'),
       tableHost),
     h('section', { class: 'section', 'aria-labelledby': 'acc-connect' },
       h('h2', { id: 'acc-connect' }, 'Connect an account'),
       h('p', { class: 'hint' },
-        'Choose what Hermes may use, then sign in with a code. To add permissions to an account you already connected, sign in to it again with more boxes ticked.'),
+        'Choose a provider and what Hermes may use, then sign in. To add permissions to an account you already connected, sign in to it again with more boxes ticked.'),
       connectHost),
   );
 
@@ -520,8 +532,8 @@ function renderAccountsTable(host, accounts, ctx) {
 
   const columns = ['Account', 'Provider', 'Type', 'Sign-in', 'Default', { label: 'Actions', hideLabel: true }];
   replace(host, dataTable(columns, accounts, (acc) => {
-    // Without a provider the server finds the one this username belongs to.
-    const who = acc.provider ? { username: acc.username, provider: acc.provider } : { username: acc.username };
+    // Always name the provider, so the server acts on it without searching all of them.
+    const who = { username: acc.username, provider: acc.provider };
     const makeDefault = acc.default
       ? h('span', { class: 'badge brass' }, h('span', { 'aria-hidden': 'true' }, '★'), 'Default')
       : h('button', { type: 'button', class: 'btn small' }, 'Make default');
@@ -551,7 +563,7 @@ function renderAccountsTable(host, accounts, ctx) {
 
     return [
       [h('strong', { class: 'break' }, acc.username || 'Unnamed account'),
-        acc.tenant_id ? h('span', { class: 'sub' }, 'Tenant ', h('code', null, acc.tenant_id)) : null],
+        tenantLine(acc)],
       badge(providerLabel({ label: acc.provider_label, name: acc.provider }), 'slate'),
       accountTypeBadge(acc.account_type),
       [signInBadge(acc.sign_in),
@@ -562,10 +574,21 @@ function renderAccountsTable(host, accounts, ctx) {
   }, { rowClass: (acc) => (acc.default ? 'is-default' : null) }));
 }
 
+/** "<tenant_label> <tenant_id>", e.g. "Tenant <id>" (Microsoft) or "Domain <hd>" (Google
+ *  Workspace); nothing when the account has none (Gmail). */
+function tenantLine(acc) {
+  if (!acc.tenant_id) return null;
+  return h('span', { class: 'sub' }, `${acc.tenant_label || 'Tenant'} `, h('code', null, String(acc.tenant_id)));
+}
+
 const scopesPath = (provider) => `/api/scopes?provider=${encodeURIComponent(provider)}`;
 
-function bundleBoxes(bundles) {
+/** Checkboxes for a provider's bundles; `defaults` (from /api/scopes) start ticked and
+ *  `restricted` ones carry the unverified-app note. */
+function bundleBoxes(bundles, defaults, restricted) {
+  const warn = new Set(Array.isArray(restricted) ? restricted : []);
   const available = Object.keys(bundles || {});
+  const preset = Array.isArray(defaults) ? defaults.filter((k) => available.includes(k)) : [];
   const keys = [
     ...BUNDLE_ORDER.filter((k) => available.includes(k)),
     ...available.filter((k) => !BUNDLE_ORDER.includes(k)),
@@ -573,13 +596,16 @@ function bundleBoxes(bundles) {
   if (!keys.length) keys.push(...BUNDLE_ORDER);
 
   return keys.map((key, i) => {
-    const input = h('input', { type: 'checkbox', name: 'bundle', value: key, checked: key === 'files' || (i === 0 && !keys.includes('files')) });
+    const checked = preset.length ? preset.includes(key) : key === 'files' || (i === 0 && !keys.includes('files'));
+    const input = h('input', { type: 'checkbox', name: 'bundle', value: key, checked });
     const perms = bundles && Array.isArray(bundles[key]) ? bundles[key] : [];
+    const info = BUNDLES[key];
     return h('label', { class: 'bundle', title: perms.length ? `Permissions: ${perms.join(', ')}` : null },
       input,
       h('span', null,
         h('span', { class: 'b-name' }, bundleLabel(key)),
-        h('span', { class: 'b-key' }, BUNDLES[key] ? BUNDLES[key].desc : key)));
+        h('span', { class: 'b-key' }, info ? info.desc : key),
+        warn.has(key) ? h('span', { class: 'b-key b-warn' }, RESTRICTED_NOTE) : null));
   });
 }
 
@@ -619,10 +645,12 @@ async function loadConnectPanel(host, ctx, reloadTable) {
   }
   let provider = first.name;
   const byName = new Map(providers.map((p) => [p.name, p]));
-  const scopeCache = new Map([[provider, scopes && scopes.bundles]]);
+  // provider -> its /api/scopes response ({bundles, defaults, restricted})
+  const scopeCache = new Map([[provider, scopes]]);
 
   const bundleSet = h('fieldset', { class: 'bundles' });
-  const showBundles = (bundles) => replace(bundleSet, h('legend', null, 'Permissions'), bundleBoxes(bundles));
+  const showBundles = (s) => replace(bundleSet, h('legend', null, 'Permissions'),
+    bundleBoxes(s && s.bundles, s && s.defaults, s && s.restricted));
   showBundles(scopeCache.get(provider));
 
   const radios = () => [...form.querySelectorAll('input[name="provider"]')];
@@ -639,7 +667,7 @@ async function loadConnectPanel(host, ctx, reloadTable) {
     try {
       if (!scopeCache.has(name)) {
         const next = await apiGet(scopesPath(name));
-        scopeCache.set(name, next && next.bundles);
+        scopeCache.set(name, next);
       }
       if (!current()) return;
       if (name !== provider) {
@@ -660,7 +688,7 @@ async function loadConnectPanel(host, ctx, reloadTable) {
     h('fieldset', { class: 'bundles' }, h('legend', null, 'Provider'), providerBoxes(providers, provider, pickProvider)),
     bundleSet,
     h('div', { class: 'row' }, startBtn,
-      h('span', { class: 'muted small' }, 'Works for personal and work or school accounts.')),
+      h('span', { class: 'muted small' }, 'Works for personal and work or school (Workspace) accounts.')),
   );
 
   form.addEventListener('submit', async (ev) => {
@@ -702,8 +730,63 @@ function codeTiles(code) {
 
 /** Render a /api/login/start result by its `kind`, not by provider. */
 function runSignInFlow(host, flow, label, ctx, reloadTable, startBtn) {
-  if (flow.kind === 'authorize_url') runRedirectFlow(host, flow, label, ctx, reloadTable, startBtn);
-  else runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn);
+  if (flow.kind === 'authorize_url') {
+    runRedirectFlow(host, flow, label, ctx, reloadTable, startBtn);
+  } else {
+    runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn);
+  }
+}
+
+/**
+ * Show a sign-in `card` in `host` as the active flow, valid for `expiresIn` seconds (else
+ * `fallback`). The start button stays disabled until `finish(ok, title, detail)` stops the flow
+ * and replaces the card with its outcome. Returns {state, finish}.
+ */
+function beginFlow(host, card, startBtn, expiresIn, fallback) {
+  const total = Math.max(1, Number(expiresIn) || fallback);
+  const state = { cancelled: false, timer: null, deadline: Date.now() + total * 1000 };
+  activeFlow = state;
+  replace(host, card);
+  startBtn.disabled = true;
+  const finish = (ok, title, detail) => {
+    stopFlow(state);
+    if (startBtn.isConnected) startBtn.disabled = false;
+    flowResult(host, ok, title, detail);
+  };
+  return { state, finish };
+}
+
+/** Poll /api/login/complete every `intervalMs` until signed in, failed or past the deadline. */
+async function pollFlow(state, flow, ctx, reloadTable, finish, intervalMs, expiredTitle, expiredDetail) {
+  while (!state.cancelled) {
+    if (Date.now() > state.deadline) {
+      finish(false, expiredTitle, expiredDetail);
+      toast(expiredTitle, 'bad');
+      return;
+    }
+    let res;
+    try {
+      res = await api('/api/login/complete', { method: 'POST', body: { flow_id: flow.flow_id } });
+    } catch (err) {
+      if (state.cancelled || err.status === 401) return;
+      finish(false, 'Sign-in failed', err.message);
+      toastError(err);
+      return;
+    }
+    if (state.cancelled) return;
+    const status = res && res.status;
+    if (status === 'signed_in') {
+      await flowSignedIn(res, ctx, reloadTable, finish);
+      return;
+    }
+    if (status !== 'pending') {
+      const msg = (res && (res.error || res.message)) || `Sign-in stopped (${status || 'unknown status'}).`;
+      finish(false, 'Sign-in failed', msg);
+      toast(msg, 'bad');
+      return;
+    }
+    await sleep(intervalMs);
+  }
 }
 
 /** Replace a sign-in card with its outcome. */
@@ -722,43 +805,48 @@ async function flowSignedIn(res, ctx, reloadTable, finish) {
   if (ctx.alive()) await reloadTable();
 }
 
-/** authorize_url: the user opens the provider's page, signs in, then pastes back the URL the
- *  browser was redirected to. No polling: one POST with the pasted URL finishes it. */
+/** authorize_url: the user opens the provider's page in a new tab and signs in. With
+ *  `needs_redirect_url` they paste back the URL the browser was redirected to (one POST
+ *  finishes it); otherwise the provider redirects to this dashboard, whose callback finishes
+ *  the sign-in, and this card polls until it has. */
 function runRedirectFlow(host, flow, label, ctx, reloadTable, startBtn) {
-  const total = Math.max(1, Number(flow.expires_in) || 600);
-  const state = { cancelled: false, timer: null, deadline: Date.now() + total * 1000 };
-  activeFlow = state;
-
-  const open = extLink(flow.authorize_url, 'Open sign-in page');
+  const paste = flow.needs_redirect_url !== false;
+  const open = extLink(flow.authorize_url, paste ? 'Open sign-in page' : `Open ${label} sign-in`);
   if (open.tagName === 'A') open.classList.add('btn', 'primary');
-  const inputId = `redirect-${String(flow.flow_id || '').replace(/[^A-Za-z0-9_-]/g, '')}`;
-  const input = h('input', {
-    type: 'url', id: inputId, name: 'redirect_url', required: true,
-    placeholder: 'http://127.0.0.1/?code=...&state=...', autocomplete: 'off', spellcheck: 'false',
-  });
-  const submitBtn = h('button', { type: 'submit', class: 'btn' }, 'Finish sign-in');
   const cancelBtn = h('button', { type: 'button', class: 'btn' }, 'Cancel');
-  const pasteForm = h('form', { class: 'field' },
-    h('label', { for: inputId }, 'Paste the address-bar URL'),
-    h('div', { class: 'row' }, h('div', { class: 'grow-input' }, input), submitBtn),
-    h('span', { class: 'hint' }, 'After you approve, the browser may show an error page. That is expected: copy its full address and paste it here.'));
+
+  let input = null;
+  let submitBtn = null;
+  let pasteForm = null;
+  if (paste) {
+    const inputId = `redirect-${String(flow.flow_id || '').replace(/[^A-Za-z0-9_-]/g, '')}`;
+    input = h('input', {
+      type: 'url', id: inputId, name: 'redirect_url', required: true,
+      placeholder: 'http://127.0.0.1/?code=...&state=...', autocomplete: 'off', spellcheck: 'false',
+    });
+    submitBtn = h('button', { type: 'submit', class: 'btn' }, 'Finish sign-in');
+    pasteForm = h('form', { class: 'field' },
+      h('label', { for: inputId }, 'Paste the address-bar URL'),
+      h('div', { class: 'row' }, h('div', { class: 'grow-input' }, input), submitBtn),
+      h('span', { class: 'hint' }, 'After you approve, the browser may show an error page. That is expected: copy its full address and paste it here.'));
+  }
 
   const card = h('div', { class: 'keytag' },
-    h('h3', null, `Finish signing in to ${label}`),
+    h('h3', null, paste ? `Finish signing in to ${label}` : `Sign in to ${label}`),
     flow.instructions ? h('p', { class: 'break' }, String(flow.instructions)) : null,
     h('div', { class: 'row' }, open),
-    pasteForm,
+    pasteForm || h('div', { class: 'status-line' },
+      h('span', { class: 'row' }, h('span', { class: 'pulse', 'aria-hidden': 'true' }), 'Waiting for you to approve in the new tab')),
     h('div', { class: 'row' }, cancelBtn),
   );
-  replace(host, card);
-  startBtn.disabled = true;
-
-  const finish = (ok, title, detail) => {
-    stopFlow(state);
-    if (startBtn.isConnected) startBtn.disabled = false;
-    flowResult(host, ok, title, detail);
-  };
+  const { state, finish } = beginFlow(host, card, startBtn, flow.expires_in, 600);
   cancelBtn.addEventListener('click', () => finish(false, 'Sign-in cancelled', 'Nothing changed.'));
+
+  if (!paste) {
+    pollFlow(state, flow, ctx, reloadTable, finish, 2000,
+      'The sign-in link expired', 'Sign-in links are valid for a limited time.');
+    return;
+  }
 
   pasteForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -792,8 +880,6 @@ function runRedirectFlow(host, flow, label, ctx, reloadTable, startBtn) {
 function runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn) {
   const code = String(flow.user_code || '');
   const total = Math.max(1, Number(flow.expires_in) || 900);
-  const state = { cancelled: false, timer: null, deadline: Date.now() + total * 1000 };
-  activeFlow = state;
 
   const copyBtn = h('button', { type: 'button', class: 'btn' }, 'Copy code');
   copyBtn.addEventListener('click', async () => {
@@ -823,8 +909,7 @@ function runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn) {
   );
   const link = card.querySelector('a');
   if (link) link.classList.add('verify');
-  replace(host, card);
-  startBtn.disabled = true;
+  const { state, finish } = beginFlow(host, card, startBtn, total, 900);
 
   const tick = () => {
     const left = Math.max(0, Math.round((state.deadline - Date.now()) / 1000));
@@ -836,47 +921,12 @@ function runDeviceCodeFlow(host, flow, label, ctx, reloadTable, startBtn) {
   tick();
   state.timer = setInterval(tick, 1000);
 
-  const finish = (ok, title, detail) => {
-    stopFlow(state);
-    if (startBtn.isConnected) startBtn.disabled = false;
-    flowResult(host, ok, title, detail);
-  };
-
   cancelBtn.addEventListener('click', () => {
     finish(false, 'Sign-in cancelled', 'The code was not used. Nothing changed.');
   });
 
-  (async () => {
-    while (!state.cancelled) {
-      if (Date.now() > state.deadline) {
-        finish(false, 'The code expired', 'Codes are valid for a limited time.');
-        toast('Sign-in code expired', 'bad');
-        return;
-      }
-      let res;
-      try {
-        res = await api('/api/login/complete', { method: 'POST', body: { flow_id: flow.flow_id } });
-      } catch (err) {
-        if (state.cancelled || err.status === 401) return;
-        finish(false, 'Sign-in failed', err.message);
-        toastError(err);
-        return;
-      }
-      if (state.cancelled) return;
-      const status = res && res.status;
-      if (status === 'signed_in') {
-        await flowSignedIn(res, ctx, reloadTable, finish);
-        return;
-      }
-      if (status !== 'pending') {
-        const msg = (res && (res.error || res.message)) || `Sign-in stopped (${status || 'unknown status'}).`;
-        finish(false, 'Sign-in failed', msg);
-        toast(msg, 'bad');
-        return;
-      }
-      await sleep(1000);
-    }
-  })();
+  pollFlow(state, flow, ctx, reloadTable, finish, 1000,
+    'The code expired', 'Codes are valid for a limited time.');
 }
 
 /* ------------------------------------------------------------------ *

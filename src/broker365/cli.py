@@ -16,7 +16,7 @@ from broker365.providers import flows
 
 app = typer.Typer(
     no_args_is_help=True,
-    help="Connect AI agents (Hermes, any MCP client) to Microsoft 365 via Graph.",
+    help="Connect AI agents (Hermes, any MCP client) to Microsoft 365 and Google accounts.",
     pretty_exceptions_enable=False,
 )
 hermes_app = typer.Typer(help="Hermes Agent integration.", no_args_is_help=True)
@@ -26,14 +26,16 @@ ScopesOpt = typer.Option(
     None,
     "--scopes",
     "-s",
-    help="Comma-separated bundles (default: the provider's first). "
+    help="Comma-separated bundles (default: "
+    + "; ".join(f"{p.name} {','.join(p.default_bundles())}" for p in providers.all())
+    + "). "
     + "; ".join(f"{p.name}: {', '.join(p.bundles())}" for p in providers.all()),
 )
 ProviderOpt = typer.Option(
     None,
     "--provider",
     "-p",
-    help="Identity provider: microsoft (default; google: soon). With --complete: the flow's.",
+    help="Identity provider: microsoft (default) or google. With --complete: the flow's.",
 )
 AccountProviderOpt = typer.Option(
     None,
@@ -66,9 +68,7 @@ def _usage_error(message: str) -> None:
 
 def _bundles(scopes: str | None, provider: providers.Provider) -> list[str]:
     bundles = [s.strip() for s in (scopes or "").split(",") if s.strip()]
-    if not bundles:
-        return list(provider.bundles())[:1]
-    return _run(providers.validate_bundles, provider.name, bundles)
+    return _run(providers.choose_bundles, provider.name, bundles)
 
 
 def _finish_headless(p: providers.Provider, flow: dict[str, Any]) -> None:
@@ -121,10 +121,10 @@ def login(
     p = _provider(provider)
     bundles = _bundles(scopes, p)
     if start:
-        _out(_run(p.login_start, bundles))
+        _out(_run(providers.login_start, p.name, bundles))
         return
     if device_code or not _has_browser():
-        _finish_headless(p, _run(p.login_start, bundles))
+        _finish_headless(p, _run(providers.login_start, p.name, bundles))
         return
     _out(_run(p.login_interactive, bundles, port))
 

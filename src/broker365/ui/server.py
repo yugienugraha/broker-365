@@ -2,7 +2,11 @@
 `guard` middleware, so no route can forget it: every request must carry the right Host header
 (DNS rebinding); `GET /?token=` performs the one-time handshake that sets the session cookie;
 every other path needs that cookie, and /api/* additionally needs the `X-Broker365: 1` header
-(no cross-site forms). Endpoints are sync and run in a threadpool; they never return tokens.
+(no cross-site forms). The one exception is `GET` on a provider's `callback_path` (e.g.
+`/oauth/google/callback`): the provider's redirect is a top-level navigation from its sign-in
+site, which a SameSite=Strict cookie doesn't follow, so that route is protected by the sign-in's
+`state` (random, single use) and PKCE instead.
+Endpoints are sync and run in a threadpool; they never return tokens.
 
 The cookie is named per port (`broker365_session_<port>`) so dashboards on different ports don't
 overwrite each other. Browsers don't isolate cookies by port, though: any other service on
@@ -14,10 +18,12 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import secrets
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
@@ -26,6 +32,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import (
     FileResponse,
+    HTMLResponse,
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
@@ -35,7 +42,10 @@ from starlette.routing import Route
 
 from broker365 import __version__, audit, config, hermes, providers, services
 from broker365.errors import Broker365Error
+from broker365.providers import callback
 from broker365.services import account
+
+log = logging.getLogger(__name__)
 
 
 def url_host(host: str) -> str:
@@ -109,15 +119,63 @@ def _provider(body: dict[str, Any]) -> str | None:
 
 
 def scopes(query: dict[str, str]) -> dict[str, Any]:
-    return {"bundles": providers.get(query.get("provider")).bundles()}
+    p = providers.get(query.get("provider"))
+    bundles = p.bundles()
+    restricted = [b for b in bundles if b in p.restricted_bundles]
+    return {"bundles": bundles, "defaults": p.default_bundles(), "restricted": restricted}
 
 
-def login_start(body: dict[str, Any]) -> dict[str, Any]:
+def callback_origin(host: str | None, port: int | None) -> str | None:
+    """The origin a provider may redirect the browser to: this dashboard, but only when it is
+    bound to a loopback address (the redirect URI must be one). None otherwise."""
+    if not port:
+        return None
+    if host in (None, "", "127.0.0.1", "localhost"):
+        return f"http://127.0.0.1:{port}"
+    if host in ("::1", "[::1]"):
+        return f"http://[::1]:{port}"
+    return None
+
+
+def login_start(
+    body: dict[str, Any], port: int | None = None, host: str | None = None
+) -> dict[str, Any]:
+    """Start a sign-in. A provider with a `callback_path` redirects back to this dashboard
+    when it listens on loopback (`host`, `port`), so it finishes by itself; otherwise (and for
+    providers without one) it behaves as for the chat tool, e.g. with a pasted-back URL."""
     bundles = _field(body, "scopes", list, required=False)
     if bundles is not None and not all(isinstance(b, str) for b in bundles):
         raise Broker365Error("'scopes' must be a list of bundle names")
-    # account_login_start checks the bundles against the provider (providers.validate_bundles)
-    return account.account_login_start(bundles, provider=_provider(body))
+    p = providers.get(_provider(body))
+    origin = callback_origin(host, port)
+    redirect = f"{origin}{p.callback_path}" if origin and p.callback_path else None
+    # providers.login_start checks the bundles against the provider (validate_bundles)
+    return providers.login_start(p.name, bundles, redirect_uri=redirect)
+
+
+def _callback_page(message: str, status: int) -> HTMLResponse:
+    return HTMLResponse(callback.page(message, home_link=True), status_code=status)
+
+
+def oauth_callback(provider_name: str, params: dict[str, list[str]]) -> HTMLResponse:
+    """GET <provider callback_path>: the provider validates state + expiry, exchanges the code
+    and stores the outcome for the dashboard's polling."""
+    p = providers.get(provider_name)
+    try:
+        result = p.complete_callback(params)
+    except Broker365Error:
+        return _callback_page(
+            f"{p.label} sign-in did not complete. Return to the broker365 dashboard and start "
+            "again.",
+            400,
+        )
+    except Exception:  # noqa: BLE001 - never leak internals (or the code) to the page / log
+        log.warning("%s sign-in callback failed", p.label)
+        return _callback_page(f"{p.label} sign-in failed. Return to the broker365 dashboard.", 500)
+    return _callback_page(
+        f"Signed in to {p.label} as {result.get('username')}. Return to the broker365 dashboard.",
+        200,
+    )
 
 
 def login_complete(body: dict[str, Any]) -> dict[str, Any]:
@@ -227,6 +285,7 @@ def create_app(
     hosts = {f"{n}:{port}" for n in names}
     if port == 80:  # browsers omit the default port from the Host header
         hosts |= names
+    callbacks = {p.callback_path: p.name for p in providers.all() if p.callback_path}
 
     def valid(value: str | None) -> bool:
         return bool(value) and secrets.compare_digest(value.encode(), token.encode())
@@ -237,6 +296,8 @@ def create_app(
         if request.headers.get("host", "").lower() not in hosts:
             return PlainTextResponse("Invalid Host header\n", status_code=400)
         path = request.url.path
+        if path in callbacks and request.method == "GET":
+            return None  # protected by state + PKCE, see the module docstring
         is_api = path == "/api" or path.startswith("/api/")
         has_session = valid(request.cookies.get(cookie))
         if path == "/" and request.method == "GET" and "token" in request.query_params:
@@ -256,8 +317,20 @@ def create_app(
 
     async def guard(request: Request, call_next: Callable) -> Response:
         response = check(request) or await call_next(request)
-        response.headers.update(SECURITY_HEADERS)
+        # The static callback page gets the stricter set (CSP default-src 'none').
+        strict = request.url.path in callbacks
+        response.headers.update(callback.HEADERS if strict else SECURITY_HEADERS)
         return response
+
+    def start(body: dict[str, Any]) -> dict[str, Any]:
+        return login_start(body, port, host)
+
+    def on_callback(provider_name: str) -> Callable:
+        async def endpoint(request: Request) -> Response:
+            params = parse_qs(request.url.query)
+            return await run_in_threadpool(oauth_callback, provider_name, params)
+
+        return endpoint
 
     async def index(request: Request) -> Response:
         return _file(static / "index.html", "text/html; charset=utf-8")
@@ -274,7 +347,8 @@ def create_app(
         Route("/api/overview", api(overview)),
         Route("/api/providers", api(providers.catalog)),
         Route("/api/scopes", api(scopes)),
-        Route("/api/login/start", api(login_start), methods=["POST"]),
+        *(Route(path, on_callback(name)) for path, name in callbacks.items()),
+        Route("/api/login/start", api(start), methods=["POST"]),
         Route("/api/login/complete", api(login_complete), methods=["POST"]),
         Route("/api/accounts/default", api(set_default), methods=["POST"]),
         Route("/api/accounts/logout", api(logout), methods=["POST"]),

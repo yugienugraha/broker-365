@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import httpx
 
+# Registry key of the default identity provider; config.MICROSOFT is this same value. It lives
+# here so error messages can tell it apart without importing config (which imports this module).
+DEFAULT_PROVIDER = "microsoft"
+
 
 class Broker365Error(Exception):
     """Base error; `str(err)` is a user-facing explanation."""
@@ -16,9 +20,11 @@ class ReauthRequired(Broker365Error):
 class ConsentRequired(Broker365Error):
     """The account hasn't granted the scope bundle this operation needs."""
 
-    def __init__(self, bundle: str):
+    def __init__(self, bundle: str, provider: str | None = None):
+        self.bundle, self.provider = bundle, provider
+        flag = f"--provider {provider} " if provider and provider != DEFAULT_PROVIDER else ""
         super().__init__(
-            f"Permission '{bundle}' not granted yet. Run: broker365 login --scopes {bundle}"
+            f"Permission '{bundle}' not granted yet. Run: broker365 login {flag}--scopes {bundle}"
         )
 
 

@@ -1,4 +1,4 @@
-"""Identity providers (Microsoft today, Google next; docs/GOOGLE_PLAN.md §5).
+"""Identity providers: Microsoft and Google (docs/GOOGLE_PLAN.md §5).
 
 A provider owns sign-in, token refresh, sign-out and its own accounts. Everything above this
 layer (services, CLI, dashboard) talks to providers through the `Provider` protocol and the
@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from broker365 import config
 from broker365.errors import Broker365Error, ReauthRequired
 from broker365.providers import flows
+from broker365.providers.google import GoogleProvider
 from broker365.providers.microsoft import MicrosoftProvider
 
 DEFAULT = config.MICROSOFT
@@ -21,13 +22,23 @@ class Provider(Protocol):
     name: str  # registry key, e.g. "microsoft"; also stored in settings, flow files, audit
     label: str  # human-readable, e.g. "Microsoft 365"
     revoke_hint: str  # where the user can revoke the app entirely (shown after sign-out)
+    available: bool  # False when it can't be used (e.g. no OAuth client configured)
+    # Path of the dashboard route the provider's sign-in redirects to (GET, exempt from the
+    # session cookie, protected by state + PKCE), or None when it has no redirect sign-in.
+    callback_path: str | None
+    restricted_bundles: frozenset[str]  # bundles that trigger an unverified-app warning
 
     def bundles(self) -> dict[str, list[str]]:
         """User-selectable scope bundles (no implicit "core") mapped to their scopes."""
         ...
 
+    def default_bundles(self) -> list[str]:
+        """Bundles to request when the user picks none."""
+        ...
+
     def list_accounts(self) -> list[dict[str, Any]]:
-        """Signed-in accounts: username, account_type, tenant_id, default, provider,
+        """Signed-in accounts: username, account_type, tenant_id (None when there is none),
+        tenant_label (what tenant_id is called, e.g. "Tenant" or "Domain"), default, provider,
         provider_label."""
         ...
 
@@ -38,8 +49,10 @@ class Provider(Protocol):
         longer usable."""
         ...
 
-    def login_start(self, bundles: list[str]) -> dict[str, Any]:
-        """Begin a chat/dashboard sign-in (state kept with `flows.save`). Returns:
+    def login_start(self, bundles: list[str], redirect_uri: str | None = None) -> dict[str, Any]:
+        """Begin a chat/dashboard sign-in (state kept with `flows.save`). `redirect_uri` (only
+        passed when `callback_path` is set) is the dashboard's callback URL; without it the
+        user finishes another way (device code, pasted-back URL). Returns:
         flow_id, provider, kind ("device_code" | "authorize_url"), instructions (user-facing
         text written by the provider), needs_redirect_url (bool), and per kind:
         device_code -> verification_uri, user_code, expires_in, message;
@@ -57,6 +70,11 @@ class Provider(Protocol):
         `data` is the flow's stored state, already read with `flows.load`."""
         ...
 
+    def complete_callback(self, params: dict[str, list[str]]) -> dict[str, Any]:
+        """Handle a GET on `callback_path` (its parsed query): validate, finish the flow and
+        return the signed-in account; raise Broker365Error otherwise."""
+        ...
+
     def login_interactive(self, bundles: list[str], port: int | None = None) -> dict[str, Any]:
         """Browser sign-in on this machine (CLI)."""
         ...
@@ -68,25 +86,16 @@ class Provider(Protocol):
     def set_default(self, username: str) -> None: ...
 
 
-# Known providers that aren't implemented yet: name -> (label, error shown when selected).
-_UNAVAILABLE: dict[str, tuple[str, str]] = {
-    "google": ("Google Workspace", "Google Workspace support is not available yet"),
-}
-
-
-_PROVIDERS: dict[str, Provider] = {p.name: p for p in (MicrosoftProvider(),)}
+_PROVIDERS: dict[str, Provider] = {p.name: p for p in (MicrosoftProvider(), GoogleProvider())}
 
 
 def get(name: str | None = None) -> Provider:
-    """The provider called `name` (default: Microsoft). Unknown or not-yet-available names
-    raise Broker365Error with a message fit for the user."""
+    """The provider called `name` (default: Microsoft). Unknown or unconfigured names raise
+    Broker365Error with a message fit for the user."""
     key = (name or DEFAULT).strip().lower()
-    if key in _PROVIDERS:
-        return _PROVIDERS[key]
-    if key in _UNAVAILABLE:
-        raise Broker365Error(_UNAVAILABLE[key][1])
-    known = ", ".join([*_PROVIDERS, *_UNAVAILABLE])
-    raise Broker365Error(f"Unknown provider '{name}'. Known: {known}")
+    if key not in _PROVIDERS:
+        raise Broker365Error(f"Unknown provider '{name}'. Known: {', '.join(_PROVIDERS)}")
+    return _PROVIDERS[key]
 
 
 def all() -> list[Provider]:
@@ -96,8 +105,8 @@ def all() -> list[Provider]:
 
 def catalog() -> list[dict[str, Any]]:
     """Every known provider for pickers: [{name, label, available}]."""
-    return [{"name": p.name, "label": p.label, "available": True} for p in _PROVIDERS.values()] + [
-        {"name": n, "label": label, "available": False} for n, (label, _) in _UNAVAILABLE.items()
+    return [
+        {"name": p.name, "label": p.label, "available": p.available} for p in _PROVIDERS.values()
     ]
 
 
@@ -124,14 +133,11 @@ def resolve(
     username: str | None = None, provider: str | None = None
 ) -> tuple[Provider, str | None]:
     """The provider to act on and the username to pass it (the provider's own spelling when
-    it was looked up). An explicit `provider` wins without any lookup; so does a single
-    available provider, which matches the username itself. Otherwise `username` is looked up
-    (case-insensitively) among the accounts of every provider that lists successfully; with
-    no username, the default provider."""
+    it was looked up). An explicit `provider` wins without any lookup. Otherwise `username`
+    is looked up (case-insensitively) among the accounts of every provider that lists
+    successfully; with no username, the default provider."""
     if provider or not username:
         return get(provider), username
-    if len(_PROVIDERS) == 1:
-        return next(iter(_PROVIDERS.values())), username
     wanted = username.strip().lower()
     found = [
         (p, a["username"])
@@ -159,6 +165,23 @@ def validate_bundles(provider_name: str | None, bundles: list[str]) -> list[str]
             f"Unknown scope bundle(s): {', '.join(unknown)}. Known: {', '.join(known)}"
         )
     return list(bundles)
+
+
+def choose_bundles(provider_name: str | None, bundles: list[str] | None) -> list[str]:
+    """`bundles` validated for the provider, or its default bundles when none are given."""
+    p = get(provider_name)
+    return validate_bundles(p.name, bundles) if bundles else p.default_bundles()
+
+
+def login_start(
+    provider_name: str | None, bundles: list[str] | None = None, redirect_uri: str | None = None
+) -> dict[str, Any]:
+    """Start a sign-in with `provider_name` (default provider when None) for `bundles` (its
+    defaults when empty). `redirect_uri` is for the dashboard only: never take it from an
+    agent, which must not choose where the authorization code is sent."""
+    return get(provider_name).login_start(
+        choose_bundles(provider_name, bundles), redirect_uri=redirect_uri
+    )
 
 
 def login_complete(

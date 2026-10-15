@@ -40,12 +40,38 @@ broker365 status
 Scope bundles: `files`, `files-shared`, `sharepoint`, `mail`, `calendar`, `contacts`, `tasks`,
 `onenote`. Run `login` again with more bundles at any time.
 
+### Google accounts (Gmail / Google Workspace)
+```bash
+broker365 login --provider google                          # default: gdrive,gsheets,gdocs
+broker365 login --provider google --scopes gmail,gcalendar # add more later the same way
+```
+On a desktop this opens the browser and catches Google's redirect on a one-shot listener on
+`127.0.0.1`. Without a browser (VPS, SSH) it prints a sign-in link instead: open it on any
+device, approve, and the browser ends on a *"This site can't be reached"* page at
+`http://127.0.0.1:<port>/?state=…&code=…`. That is expected. Copy the **full address-bar URL**
+and paste it into the terminal. The code in it is single-use, short-lived and useless without
+the PKCE verifier that only broker365 holds.
+
+Google bundles: `gdrive` (all of Drive), `gdrive-app` (only files broker365 created or opened),
+`gsheets`, `gdocs`, `gslides`, `gmail` (read, label, draft, send; no permanent delete),
+`gcalendar`, `gcontacts`, `gtasks`.
+
+**"Google hasn't verified this app".** broker365's Google client is in production but not
+verified (private use, at most 100 users). Google shows this warning, especially for the
+*restricted* scopes `gdrive` and `gmail`: choose **Advanced → Go to broker365 (unsafe)** to
+continue. Prefer `gdrive-app` if you don't want to grant access to your whole Drive.
+Sign out with `broker365 logout --provider google -a you@gmail.com` (this also revokes the
+token at Google); remove the app entirely at <https://myaccount.google.com/connections>.
+A Workspace org that blocks third-party apps can bring its own *Internal* client:
+`BROKER365_GOOGLE_CLIENT_ID` / `BROKER365_GOOGLE_CLIENT_SECRET`.
+
 ## Dashboard
 ```bash
 broker365 ui                 # opens http://127.0.0.1:8365 in your browser
 broker365 ui --no-browser    # just print the link (e.g. on a VPS)
 ```
-The dashboard lets you sign in to Microsoft accounts (device code), pick the default account,
+The dashboard lets you sign in to Microsoft accounts (device code) and Google accounts (Google
+redirects back to the dashboard, so it finishes by itself), pick the default account,
 switch read-only mode, manage allowed folders, connect Hermes, and review activity.
 It listens only on `127.0.0.1` and uses a one-time link with a secret token. On a VPS, reach it
 through an SSH tunnel: `ssh -L 8365:127.0.0.1:8365 you@vps`, then open the printed link locally.
@@ -55,8 +81,8 @@ through an SSH tunnel: `ssh -L 8365:127.0.0.1:8365 you@vps`, then open the print
 broker365 hermes install      # adds the `m365` MCP server to $HERMES_HOME/config.yaml + installs the skill
 ```
 Restart Hermes, then ask it something like *"Create /Budget.xlsx with these numbers and share a
-view link"*. Hermes can also run the sign-in itself over chat (device code), with no terminal
-needed.
+view link"*. Hermes can also run the sign-in itself over chat, with no terminal needed: a
+device code for Microsoft, and for Google a link plus "paste back the address-bar URL".
 
 ## Use from the terminal
 ```bash

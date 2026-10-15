@@ -24,11 +24,27 @@ setup on the user's side, and tokens stay on this machine.
 2. If not signed in, or a tool reports a missing permission, call
    `mcp_m365_account_login_start` with `scopes` set to what's needed. Bundles: `files`,
    `mail`, `calendar`, `contacts`, `tasks`, `files-shared`, `sharepoint`, `onenote`.
-3. Send the user the `verification_uri` and `user_code`, and ask them to sign in from any device.
+3. Microsoft (`kind: "device_code"`): send the user the `verification_uri` and `user_code`, and
+   ask them to sign in from any device.
 4. Call `mcp_m365_account_login_complete` with the `flow_id`. Repeat while status is `pending`.
 
 Terminal alternative: `broker365 login --scopes files,mail` (opens a browser, or uses a device
 code automatically when there's no display).
+
+### Connecting a Google account (Gmail / Google Workspace) over chat
+1. Call `mcp_m365_account_login_start` with `provider="google"` and `scopes`, e.g.
+   `["gdrive", "gsheets", "gdocs"]` (the default). Bundles: `gdrive`, `gdrive-app`, `gsheets`,
+   `gdocs`, `gslides`, `gmail`, `gcalendar`, `gcontacts`, `gtasks`.
+2. The result has `kind: "authorize_url"` and `needs_redirect_url: true`. Send the user the
+   `authorize_url` and the `instructions`: sign in, approve (if Google says it hasn't verified
+   the app, choose *Advanced → Go to broker365*), then the browser shows *"This site can't be
+   reached"*. That is expected: they copy the **full address-bar URL** (it starts with
+   `http://127.0.0.1:`) and paste it into the chat. The link is valid for 10 minutes.
+3. Call `mcp_m365_account_login_complete` with the `flow_id` and `redirect_url` set to the
+   pasted URL. Status `signed_in` means done. If it says the state doesn't match, ask for the
+   URL from the latest sign-in; if it expired, start again.
+Never echo the pasted URL back or store it anywhere: it contains a one-time code.
+Terminal alternative: `broker365 login --provider google`.
 
 ## Files and Office documents
 - Address files by absolute OneDrive path (`/Documents/Budget.xlsx`) or by item id.

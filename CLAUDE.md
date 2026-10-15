@@ -24,9 +24,13 @@ src/broker365/
   errors.py       Broker365Error hierarchy (ConsentRequired, ReauthRequired, GraphError, ConflictError…)
   auth.py         MSAL PublicClientApplication, encrypted token cache, interactive + device-code login
   providers/      identity-provider registry (`get`, `all`, `catalog`, `resolve`, `validate_bundles`,
-                  flow dispatch) + `Provider` protocol; microsoft.py adapts auth.py; flows.py stores
+                  `login_start` (default bundles), flow dispatch) + `Provider` protocol (redirect
+                  sign-in via `callback_path` + `complete_callback`); callback.py = the static
+                  OAuth landing page + its headers; microsoft.py adapts auth.py; flows.py stores
                   pending sign-in flows for every provider. Defaults per provider in config.toml
                   `default_accounts` (legacy `default_account` = Microsoft's, migrated on write)
+                  google.py: Google OAuth (loopback / dashboard callback / paste-back, PKCE,
+                  state `<flow_id>.<secret>`), encrypted google_tokens.bin, refresh, revoke
   graph.py        httpx Graph client: paging, Retry-After, redirects without token, upload sessions
   services/       tool registry (__init__) + account, files, excel, word, powerpoint, mail, calendar, contacts, tasks, sharepoint, onenote
   cli.py          Typer app, entry point `broker365`
@@ -55,6 +59,7 @@ broker365 call files_list '{"path": "/"}'
 
 ## Environment
 - `BROKER365_CLIENT_ID` overrides the built-in client ID (bring-your-own app registration).
+- `BROKER365_GOOGLE_CLIENT_ID` / `BROKER365_GOOGLE_CLIENT_SECRET` override the built-in Google Desktop client (docs/GOOGLE_PLAN.md).
 - Broker home resolution: `BROKER365_HOME` → `$HERMES_HOME/broker365` → `~/.broker365`.
 - Other env vars: `BROKER365_ACCOUNT`, `BROKER365_READ_ONLY`, `BROKER365_WORKSPACE`, `BROKER365_ALLOWED_DIRS`, `BROKER365_PLAINTEXT_CACHE` (tests/CI only).
 - Hermes passes MCP servers a **filtered environment**, so `hermes install` writes `BROKER365_HOME` (and the client ID, if set) into the server's `env:` block.

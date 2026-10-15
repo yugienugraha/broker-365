@@ -18,10 +18,16 @@ from broker365 import __version__, services
 from broker365.errors import Broker365Error
 
 INSTRUCTIONS = """\
-Microsoft 365 (OneDrive, Excel, Word, PowerPoint, Outlook mail/calendar/contacts, To Do).
+Microsoft 365 (OneDrive, Excel, Word, PowerPoint, Outlook mail/calendar/contacts, To Do);
+Google accounts can be connected too (sign-in only for now).
 - If a tool says the user isn't signed in or a permission isn't granted, call
-  account_login_start with the needed scopes, show the user the URL and code, then poll
-  account_login_complete until status is 'signed_in'.
+  account_login_start with the needed scopes (and provider). For kind 'device_code'
+  (Microsoft) show the user the URL and code, then poll account_login_complete until status is
+  'signed_in'.
+- For kind 'authorize_url' (provider="google"), send the user authorize_url and the
+  instructions; they approve, land on a "site can't be reached" page and paste its full
+  address-bar URL back. Call account_login_complete(flow_id, redirect_url=<that URL>). Don't
+  repeat the pasted URL to anyone: it holds a one-time code.
 - Files are addressed by absolute OneDrive path ('/Documents/report.docx') or item id.
 - Word/PowerPoint (and Excel on some personal accounts) are edited by download→edit→upload;
   if someone changed the file meanwhile you get a conflict instead of an overwrite.

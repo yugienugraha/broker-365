@@ -29,7 +29,8 @@ def fake(monkeypatch):
 def test_registry():
     ms = providers.get("microsoft")
     assert providers.get() is ms and providers.get(" Microsoft ") is ms
-    assert providers.DEFAULT == "microsoft" and providers.all() == [ms]
+    gp = providers.get("google")
+    assert providers.DEFAULT == "microsoft" and providers.all() == [ms, gp]
     assert (ms.name, ms.label) == ("microsoft", "Microsoft 365")
     assert ms.name == config.MICROSOFT == auth.PROVIDER == providers.DEFAULT
     assert "account.live.com/consent/Manage" in ms.revoke_hint
@@ -37,13 +38,13 @@ def test_registry():
     assert "core" not in ms.bundles()
     assert providers.catalog() == [
         {"name": "microsoft", "label": "Microsoft 365", "available": True},
-        {"name": "google", "label": "Google Workspace", "available": False},
+        {"name": "google", "label": "Google Workspace", "available": True},
     ]
+    assert ms.default_bundles() == ["files"]
 
 
-def test_unknown_and_unavailable_provider():
-    with pytest.raises(Broker365Error, match="Google Workspace support is not available yet"):
-        providers.get("google")
+def test_unknown_provider():
+    assert providers.get(" Google ").name == "google"
     with pytest.raises(Broker365Error, match="Unknown provider 'yahoo'. Known: microsoft, google"):
         providers.get("yahoo")
 
@@ -115,14 +116,15 @@ def test_legacy_flow_file_without_provider_is_microsoft(fake):
     assert providers.login_complete(flow_id, wait_seconds=1)["status"] == "signed_in"
 
 
-def test_flow_dispatch_to_unavailable_provider(fake):
+def test_flow_dispatch_to_google(fake):
     fake()
     flow_id = "googleflow123"
     path = config.broker_home() / "flows" / f"{flow_id}.json"
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps({"provider": "google", "data": {}}))
-    with pytest.raises(Broker365Error, match="Google Workspace support is not available yet"):
+    with pytest.raises(Broker365Error, match="Sign-in expired, start again"):
         account.account_login_complete(flow_id)
+    assert not path.exists()
     with pytest.raises(Broker365Error, match="Invalid flow id"):
         account.account_login_complete("../../config")
 
@@ -145,8 +147,10 @@ def test_account_login_start_provider_param(monkeypatch):
     assert calls == [["files"], ["mail"], ["calendar"]]
     with pytest.raises(Broker365Error, match="Unknown scope bundle.s.: gmail. Known: files"):
         account.account_login_start(["gmail"])
-    with pytest.raises(Broker365Error, match="not available yet"):
-        account.account_login_start(provider="google")
+    started = account.account_login_start(provider="google")
+    assert started["kind"] == "authorize_url" and started["needs_redirect_url"] is True
+    assert flows.load(started["flow_id"])[0] == "google"
+    assert "spreadsheets" in started["authorize_url"]  # a default bundle
     with pytest.raises(Broker365Error, match="Unknown provider"):
         services.call("account_login_start", provider="nope")
 
@@ -163,6 +167,7 @@ def test_account_status_lists_provider(fake):
             "default": False,
             "provider": "microsoft",
             "provider_label": "Microsoft 365",
+            "tenant_label": "Tenant",
             "sign_in": "valid",
         }
     ]
@@ -181,15 +186,13 @@ def test_account_status_reports_provider_error(monkeypatch):
 def test_cli_provider_option(fake):
     fake(accounts=[ALICE, BOB])
     for args in (
-        ["login", "--provider", "google"],
-        ["logout", "--provider", "google"],
-        ["accounts", "--default", "x@y.com", "--provider", "google"],
+        ["login", "--provider", "nope"],
+        ["logout", "--provider", "nope"],
+        ["accounts", "--default", "x@y.com", "--provider", "nope"],
     ):
         result = runner.invoke(cli_app, args)
         assert result.exit_code == 1
-        assert "Google Workspace support is not available yet" in result.output
-    result = runner.invoke(cli_app, ["login", "--provider", "nope"])
-    assert result.exit_code == 1 and "Unknown provider" in result.output
+        assert "Unknown provider 'nope'. Known: microsoft, google" in result.output
     result = runner.invoke(cli_app, ["login", "--scopes", "nope", "--start"])
     assert result.exit_code == 1 and "Unknown scope bundle(s): nope" in result.output
 
@@ -287,6 +290,9 @@ class FakeProvider:
     name = "fakeprov"
     label = "Fake Cloud"
     revoke_hint = "Revoke at https://fake.example/apps."
+    available = True
+    callback_path = None
+    restricted_bundles = frozenset()
 
     def __init__(self, accounts=(), token_error=None, list_error=None):
         self.accounts = list(accounts)
@@ -312,7 +318,7 @@ class FakeProvider:
         if self.token_error:
             raise Broker365Error(self.token_error)
 
-    def login_start(self, bundles):
+    def login_start(self, bundles, redirect_uri=None):
         flow_id = flows.save(self.name, {"bundles": bundles, "state": "s1"})
         return {
             "flow_id": flow_id,
@@ -406,8 +412,8 @@ def test_resolve(fake, fake_provider):
         providers.resolve("bob@outlook.com")
     with pytest.raises(Broker365Error, match="Account nobody@x.com is not signed in"):
         providers.resolve("nobody@x.com")
-    with pytest.raises(Broker365Error, match="not available yet"):
-        providers.resolve("alice@contoso.com", "google")
+    with pytest.raises(Broker365Error, match="Unknown provider"):
+        providers.resolve("alice@contoso.com", "nope")
 
 
 def test_cli_logout_and_default_resolve_by_username(fake, fake_provider):
@@ -439,8 +445,9 @@ def test_validate_bundles(fake_provider):
         providers.validate_bundles("microsoft", ["files", "nope"])
     with pytest.raises(Broker365Error, match=r"bundle\(s\): files. Known: fdrive, fmail$"):
         providers.validate_bundles("fakeprov", ["files"])
-    with pytest.raises(Broker365Error, match="not available yet"):
-        providers.validate_bundles("google", ["gmail"])
+    assert providers.validate_bundles("google", ["gmail", "core"]) == ["gmail", "core"]
+    with pytest.raises(Broker365Error, match=r"bundle\(s\): files. Known: gdrive, gdrive-app, "):
+        providers.validate_bundles("google", ["files"])
 
 
 def test_account_status_uses_check_token(fake, fake_provider, monkeypatch):
@@ -550,9 +557,10 @@ def test_resolve_skips_lookup_when_provider_is_known(fake, monkeypatch):
     monkeypatch.setattr(auth, "list_accounts", lambda: listed.append(1) or real())
     ms = providers.get()
     assert providers.resolve("x@y.com", "microsoft") == (ms, "x@y.com")
-    # a single provider matches the username itself (auth.current_account)
-    assert providers.resolve("ALICE@contoso.com") == (ms, "ALICE@contoso.com")
     assert listed == []
+    # without a provider, the account is looked up and the provider's spelling returned
+    assert providers.resolve("ALICE@contoso.com") == (ms, "alice@contoso.com")
+    assert listed == [1]
     with pytest.raises(ReauthRequired, match="Account ghost@x.com is not signed in"):
         ms.logout("ghost@x.com")
 

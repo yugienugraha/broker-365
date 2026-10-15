@@ -197,7 +197,7 @@ def _finish_login(result: dict[str, Any]) -> dict[str, Any]:
     granted = result.get("scope", "").split()
     audit.record_admin(
         "login",
-        {"provider": PROVIDER, "username": username, "scopes": _bundles_granted(granted)},
+        {"provider": PROVIDER, "username": username, "scopes": config.granted_bundles(granted)},
     )
     return {
         "username": username,
@@ -206,14 +206,6 @@ def _finish_login(result: dict[str, Any]) -> dict[str, Any]:
         "tenant_id": claims.get("tid"),
         "scopes": result.get("scope", "").split(),
     }
-
-
-def _bundles_granted(scopes: list[str]) -> list[str]:
-    """Scope bundles fully covered by the granted scopes (names only, for the audit log)."""
-    have = {s.rsplit("/", 1)[-1].lower() for s in scopes}
-    return [
-        b for b in config.user_bundles() if {s.lower() for s in config.SCOPE_BUNDLES[b]} <= have
-    ]
 
 
 def login_interactive(bundles: list[str], port: int | None = None) -> dict[str, Any]:

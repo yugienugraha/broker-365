@@ -47,11 +47,15 @@ def cleanup(max_age: float = MAX_AGE) -> None:
             pass
 
 
-def save(provider: str, data: dict[str, Any]) -> str:
-    """Store a new flow for `provider` and return its id. The file is written to a private
-    temp file and renamed into place, so a crash never leaves a partial flow behind."""
-    cleanup()
-    flow_id = secrets.token_urlsafe(12)
+def new_id() -> str:
+    """A fresh random flow id, for providers that must know the id before saving (e.g. to
+    embed it in an OAuth `state`)."""
+    return secrets.token_urlsafe(12)
+
+
+def _write(flow_id: str, provider: str, data: dict[str, Any]) -> None:
+    """Write a flow file atomically: a private temp file renamed into place, so a crash (or a
+    concurrent reader) never sees a partial flow."""
     path = _path(flow_id)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{flow_id}.", suffix=".tmp")
     tmp = Path(tmp_name)
@@ -66,7 +70,23 @@ def save(provider: str, data: dict[str, Any]) -> str:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def save(provider: str, data: dict[str, Any], flow_id: str | None = None) -> str:
+    """Store a new flow for `provider` and return its id (`flow_id` from `new_id()`, or a
+    fresh one)."""
+    cleanup()
+    flow_id = flow_id or new_id()
+    _write(flow_id, provider, data)
     return flow_id
+
+
+def update(flow_id: str, provider: str, data: dict[str, Any]) -> None:
+    """Replace the data of a pending flow (atomically). A flow that was already consumed is
+    not brought back: that raises like `load`."""
+    if not _path(flow_id).exists():
+        raise Broker365Error("Unknown or already-used flow id. Start again: broker365 login")
+    _write(flow_id, provider, data)
 
 
 def load(flow_id: str) -> tuple[str, dict[str, Any]]:

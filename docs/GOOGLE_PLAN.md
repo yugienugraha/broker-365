@@ -5,7 +5,8 @@
 > signs in, tokens stay local, and Hermes gets tools through the same MCP server, CLI and
 > dashboard.
 >
-> Status: plan only (2026-10-15). Facts below were checked against Google's current docs via
+> Status: G0–G2 done (2026-10-15): sign-in, token storage/refresh and revoke; no Google tools yet.
+> Facts below were checked against Google's current docs via
 > Context7 (Identity OAuth 2.0, Drive, Gmail and Sheets API docs, google-auth-library-python).
 
 ---
@@ -146,11 +147,42 @@ Safety rules carry over unchanged:
 |---|---|---|
 | G0 ✅ | Publisher GCP project + Desktop client (§2) | Done 2026-10-15, see §2a |
 | G1 ✅ | `providers/` abstraction; Microsoft moved behind it with **no behaviour change**; per-provider default account + settings migration | Done 2026-10-15: `providers/` registry + Microsoft adapter, `default_accounts` (legacy key migrated on next write), `provider` on accounts/flows/tools/audit/CLI/dashboard; existing 201 tests pass (assertions only gained `provider` / `default_accounts`) |
-| G2 | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart |
+| G2 ✅ (code) | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart. Implemented 2026-10-15, see §8a; live sign-in still to be checked by the owner |
 | G3 | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export |
 | G4 | Sheets, Docs, Slides tools (native batchUpdate) | Live smoke: create sheet, write formulas, read back computed values; doc from Markdown; slides from outline |
 | G5 | Gmail, Calendar, Tasks, Contacts | Live smoke (read-only on real mail; draft-only send test) |
 | G6 | Dashboard provider tabs, Hermes skill + MCP instructions update, docs | Browser test of both providers; `hermes install` registers one server exposing both |
+
+## 8a. G2 result (2026-10-15)
+- `providers/google.py` (`GoogleProvider`), registered next to Microsoft; `providers.catalog()`
+  shows Google as available when a client ID + secret are configured. The client ID and secret
+  are built into `config.py` (`DEFAULT_GOOGLE_CLIENT_ID/SECRET`); env overrides
+  `BROKER365_GOOGLE_CLIENT_ID/SECRET` (a bring-your-own ID must come with its own secret).
+- Bundles live in `config.GOOGLE_SCOPE_BUNDLES` (core = `openid email profile`), default
+  `gdrive,gsheets,gdocs` (`Provider.default_bundles()`, also used by the CLI, the chat tool and
+  the dashboard's pre-ticked boxes).
+- One validator for every path: `state = "<flow_id>.<secret>"` (compared with
+  `secrets.compare_digest`), expiry 600 s, only `code`/`state`/`error` read. Paste-back URLs must
+  be `http://` + loopback host + the flow's port and path; they are never fetched.
+  `flows.new_id()` / `flows.save(..., flow_id=)` / `flows.update()` (atomic) were added so the id
+  is known before the state is built.
+- Dashboard: `/api/login/start` for Google uses `http://127.0.0.1:<port>/oauth/google/callback`.
+  The `guard` lets exactly `GET /oauth/google/callback` through without the session cookie (Host
+  check and security headers still apply). The callback exchanges the code and stores
+  `{"result": …}` / `{"error": …}` in the flow file (verifier dropped first); the page polls
+  `/api/login/complete` every 2 s.
+- Tokens: `google_tokens.bin` through the same `msal_extensions` persistence as the Microsoft
+  cache; `{"accounts": {email_lower: {email, sub, refresh_token, scopes, hd, created}}}` under a
+  thread lock plus a cross-process lockfile (`google_tokens.bin.lockfile`). Re-consent without a
+  new refresh token keeps the old one; the stored scopes are Google's granted `scope` (all
+  current grants, via include_granted_scopes). The email must be verified, and a different
+  `sub` for the same address replaces the record. Access
+  tokens are memoized ≤ 300 s. `invalid_grant` → `ReauthRequired`; a missing bundle →
+  `ConsentRequired(bundle, "google")` ("… login --provider google --scopes <bundle>").
+- Logout revokes the refresh token at `oauth2.googleapis.com/revoke` (best effort), deletes it,
+  clears the memo and the default.
+- Tests: `tests/test_google.py` (Google endpoints mocked; the loopback callback is a real
+  request to 127.0.0.1).
 
 Each milestone follows the existing process: tests, then `/simplify`, `/code-review`,
 `/security-review`, then commit and push to `main`.

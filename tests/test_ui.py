@@ -3,35 +3,13 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from broker365 import audit, auth, config, hermes
+from broker365 import audit, auth, config, hermes, providers
 from broker365.errors import Broker365Error, ReauthRequired
 from broker365.providers import flows
 from broker365.ui import server
+from tests.conftest import API, BASE, PORT, TOKEN
 
-TOKEN = "t0ken-for-tests"
-BASE = "http://127.0.0.1:8365"
-API = {"X-Broker365": "1"}
-COOKIE = "broker365_session_8365"
-
-
-@pytest.fixture
-def static(tmp_path):
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>broker365</title>")
-    (d / "app.js").write_text("console.log(1)")
-    return d
-
-
-@pytest.fixture
-def client(static):
-    return TestClient(server.create_app(TOKEN, 8365, static), base_url=BASE)
-
-
-@pytest.fixture
-def authed(client):
-    client.cookies.set(COOKIE, TOKEN)
-    return client
+COOKIE = server.cookie_name(PORT)
 
 
 @pytest.fixture
@@ -87,7 +65,10 @@ def test_guard_protects_routes_without_api_wrapper(static):
 
     app.router.routes += [Route("/raw", raw), Route("/api/raw", raw)]
     c = TestClient(app, base_url=BASE)
-    paths = [r.path for r in app.router.routes if "{" not in r.path] + ["/static/app.js", "/nope"]
+    # exempt from the cookie: state-protected (tests/test_google.py)
+    callbacks = {p.callback_path for p in providers.all() if p.callback_path}
+    paths = [r.path for r in app.router.routes if "{" not in r.path and r.path not in callbacks]
+    paths += ["/static/app.js", "/nope"]
     for path in paths:
         r = c.get(path, headers=API)
         assert r.status_code == 401 and "secret" not in r.text, path
@@ -114,7 +95,7 @@ def test_cookie_is_per_port(static):
     assert server.cookie_name(8365) == COOKIE
     c = TestClient(server.create_app(TOKEN, 9001, static), base_url="http://127.0.0.1:9001")
     r = c.get(f"/?token={TOKEN}", follow_redirects=False)
-    assert r.headers["set-cookie"].startswith(f"broker365_session_9001={TOKEN};")
+    assert r.headers["set-cookie"].startswith(f"{server.cookie_name(9001)}={TOKEN};")
     other = TestClient(server.create_app(TOKEN, 9001, static), base_url="http://127.0.0.1:9001")
     other.cookies.set(COOKIE, TOKEN)  # another port's session doesn't count here
     assert other.get("/").status_code == 401
@@ -122,7 +103,7 @@ def test_cookie_is_per_port(static):
 
 def test_port_80_accepts_hosts_without_port(static):
     c = TestClient(server.create_app(TOKEN, 80, static), base_url="http://127.0.0.1")
-    c.cookies.set("broker365_session_80", TOKEN)
+    c.cookies.set(server.cookie_name(80), TOKEN)
     for host in ("127.0.0.1", "localhost", "[::1]", "127.0.0.1:80", "localhost:80"):
         assert c.get("/", headers={"Host": host}).status_code == 200, host
     assert c.get("/", headers={"Host": "evil.example"}).status_code == 400
@@ -377,12 +358,15 @@ def test_providers_and_provider_params(authed, accounts, monkeypatch):
     r = authed.get("/api/providers", headers=API)
     assert r.json() == [
         {"name": "microsoft", "label": "Microsoft 365", "available": True},
-        {"name": "google", "label": "Google Workspace", "available": False},
+        {"name": "google", "label": "Google Workspace", "available": True},
     ]
     ms = authed.get("/api/scopes?provider=microsoft", headers=API).json()
     assert ms == authed.get("/api/scopes", headers=API).json()
     r = authed.get("/api/scopes?provider=google", headers=API)
-    assert r.status_code == 400 and "not available yet" in r.json()["error"]
+    assert "gmail" in r.json()["bundles"] and r.json()["restricted"] == ["gdrive", "gmail"]
+    assert ms["restricted"] == [] and ms["defaults"] == ["files"]
+    r = authed.get("/api/scopes?provider=nope", headers=API)
+    assert r.status_code == 400 and "Unknown provider" in r.json()["error"]
 
     calls = []
     monkeypatch.setattr(auth, "device_flow_start", lambda b: calls.append(b) or {"flow_id": "F"})
@@ -398,8 +382,8 @@ def test_providers_and_provider_params(authed, accounts, monkeypatch):
     r = authed.post("/api/login/start", headers=API, json=body)
     assert r.json()["provider"] == "microsoft" and r.json()["flow_id"] == "F"
     assert calls == [["mail"]]
-    r = authed.post("/api/login/start", headers=API, json={"provider": "google"})
-    assert r.status_code == 400 and "not available yet" in r.json()["error"]
+    r = authed.post("/api/login/start", headers=API, json={"provider": "nope"})
+    assert r.status_code == 400 and "Unknown provider" in r.json()["error"]
     r = authed.post("/api/login/start", headers=API, json={"provider": 1})
     assert r.status_code == 400
 

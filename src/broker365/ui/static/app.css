@@ -273,6 +273,7 @@ label { font-weight: 500; }
 .bundle.is-disabled { opacity: 0.6; cursor: not-allowed; }
 .bundle .b-name { display: block; font-weight: 600; }
 .bundle .b-key { display: block; font-size: 0.82rem; color: var(--muted); line-height: 1.35; margin-top: 2px; }
+.bundle .b-warn { color: var(--warn); }
 
 /* switch */
 .switch-row { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; }

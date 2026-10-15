@@ -48,12 +48,10 @@ def account_login_start(
     open `verification_uri` and enter `user_code`; then call account_login_complete with
     `flow_id`. If `kind` is "authorize_url", they open `authorize_url`, sign in and paste back
     the address-bar URL they land on; then call account_login_complete with `flow_id` and that
-    `redirect_url`. provider: microsoft (default). scopes: that provider's bundles, for
-    microsoft files, mail, calendar, contacts, tasks, files-shared, sharepoint, onenote
-    (default: the provider's first, files)."""
-    p = providers.get(provider)
-    bundles = providers.validate_bundles(p.name, scopes) if scopes else list(p.bundles())[:1]
-    return p.login_start(bundles)
+    `redirect_url`. provider: microsoft (default) or google. scopes: bundle names of that
+    provider (an unknown name returns the provider's list); leave empty for the provider's
+    defaults, which depend on the provider."""
+    return providers.login_start(provider, scopes)
 
 
 @tool("core")
@@ -62,8 +60,9 @@ def account_login_complete(
 ) -> dict[str, Any]:
     """Finish a sign-in from account_login_start. For a "device_code" flow, waits up to
     `wait_seconds` for the user and returns status 'pending' (call again) or 'signed_in'.
-    For an "authorize_url" flow (needs_redirect_url), pass the URL the user pasted back as
-    `redirect_url`. Leave redirect_url empty for device-code flows (e.g. Microsoft)."""
+    For an "authorize_url" flow (needs_redirect_url, e.g. Google), pass the full URL the user
+    pasted back as `redirect_url`. Leave redirect_url empty for device-code flows (e.g.
+    Microsoft)."""
     return providers.login_complete(
         flow_id, wait_seconds=max(1, min(wait_seconds, 100)), redirect_url=redirect_url
     )

@@ -13,7 +13,7 @@ from typing import Any
 
 import tomli_w
 
-from broker365.errors import Broker365Error, PathNotAllowed
+from broker365.errors import DEFAULT_PROVIDER, Broker365Error, PathNotAllowed
 
 # Public client ID of the publisher's multi-tenant app registration "broker365" (docs/PLAN.md
 # §3.1; any Entra tenant + personal accounts, public client, no secret). Not a secret: it
@@ -22,7 +22,33 @@ PLACEHOLDER_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
 DEFAULT_CLIENT_ID = "5b97899a-d268-4f28-b4e6-3ed7ee60e65f"
 
 # Registry key of the Microsoft identity provider (default_accounts, flow files, audit, tools).
-MICROSOFT = "microsoft"
+MICROSOFT = DEFAULT_PROVIDER
+
+# Google "Desktop app" OAuth client of the publisher's project (docs/GOOGLE_PLAN.md §2a). Google
+# documents installed-app client secrets as non-confidential ("obviously not treated as a
+# secret"); PKCE protects the code exchange. Still: keep this repo private, and never print the
+# secret. Users may bring their own client with BROKER365_GOOGLE_CLIENT_ID / _SECRET.
+GOOGLE = "google"
+DEFAULT_GOOGLE_CLIENT_ID = (
+    "174513608376-4ehppkiqu1pt356n4ov8o7f0tk96ei8i.apps.googleusercontent.com"
+)
+DEFAULT_GOOGLE_CLIENT_SECRET = "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"  # noqa: S105 - see above
+
+_G = "https://www.googleapis.com/auth/"
+# Google scope bundles (docs/GOOGLE_PLAN.md §4). "core" is always requested.
+GOOGLE_SCOPE_BUNDLES: dict[str, list[str]] = {
+    "core": ["openid", "email", "profile"],
+    "gdrive": [_G + "drive"],
+    "gdrive-app": [_G + "drive.file"],
+    "gsheets": [_G + "spreadsheets"],
+    "gdocs": [_G + "documents"],
+    "gslides": [_G + "presentations"],
+    "gmail": [_G + "gmail.modify"],
+    "gcalendar": [_G + "calendar"],
+    "gcontacts": [_G + "contacts"],
+    "gtasks": [_G + "tasks"],
+}
+GOOGLE_DEFAULT_BUNDLES = ["gdrive", "gsheets", "gdocs"]
 
 AUTHORITY = "https://login.microsoftonline.com/common"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -54,6 +80,18 @@ def client_id() -> str:
     return os.environ.get("BROKER365_CLIENT_ID", "").strip() or DEFAULT_CLIENT_ID
 
 
+def google_client_id() -> str:
+    return os.environ.get("BROKER365_GOOGLE_CLIENT_ID", "").strip() or DEFAULT_GOOGLE_CLIENT_ID
+
+
+def google_client_secret() -> str:
+    """The Google client secret: the env override, else the built-in one (only when the client
+    ID is the built-in one too; a bring-your-own client ID needs its own secret)."""
+    if val := os.environ.get("BROKER365_GOOGLE_CLIENT_SECRET", "").strip():
+        return val
+    return DEFAULT_GOOGLE_CLIENT_SECRET if google_client_id() == DEFAULT_GOOGLE_CLIENT_ID else ""
+
+
 def broker_home() -> Path:
     """BROKER365_HOME → $HERMES_HOME/broker365 → ~/.broker365 (created with mode 700)."""
     if val := os.environ.get("BROKER365_HOME", "").strip():
@@ -66,20 +104,39 @@ def broker_home() -> Path:
     return home
 
 
-def user_bundles() -> list[str]:
-    """Bundles a user can choose; `core` is always included implicitly."""
-    return [b for b in SCOPE_BUNDLES if b != "core"]
+def user_bundles(table: dict[str, list[str]] | None = None) -> list[str]:
+    """Bundles a user can choose from `table` (default: Microsoft's SCOPE_BUNDLES); `core` is
+    always included implicitly."""
+    return [b for b in (SCOPE_BUNDLES if table is None else table) if b != "core"]
 
 
-def scopes_for(bundles: list[str]) -> list[str]:
-    unknown = [b for b in bundles if b not in SCOPE_BUNDLES]
+def scopes_for(bundles: list[str], table: dict[str, list[str]] | None = None) -> list[str]:
+    """Core scopes plus those of `bundles` from `table` (default SCOPE_BUNDLES), validated."""
+    table = SCOPE_BUNDLES if table is None else table
+    unknown = [b for b in bundles if b not in table]
     if unknown:
-        known = ", ".join(user_bundles())
+        known = ", ".join(user_bundles(table))
         raise Broker365Error(f"Unknown scope bundle(s): {', '.join(unknown)}. Known: {known}")
-    scopes: list[str] = list(SCOPE_BUNDLES["core"])
+    scopes: list[str] = list(table["core"])
     for b in bundles:
-        scopes += [s for s in SCOPE_BUNDLES[b] if s not in scopes]
+        scopes += [s for s in table[b] if s not in scopes]
     return scopes
+
+
+def _scope_name(scope: str) -> str:
+    return scope.rsplit("/", 1)[-1].lower()
+
+
+def granted_bundles(
+    scopes: Iterable[str],
+    table: dict[str, list[str]] | None = None,
+    norm: Callable[[str], str] = _scope_name,
+) -> list[str]:
+    """User bundles of `table` (default SCOPE_BUNDLES) fully covered by the granted `scopes`,
+    both sides compared through `norm` (default: last path segment, lowercased)."""
+    table = SCOPE_BUNDLES if table is None else table
+    have = {norm(s) for s in scopes}
+    return [b for b in user_bundles(table) if {norm(s) for s in table[b]} <= have]
 
 
 # ---- persisted settings (config.toml) -------------------------------------------------
