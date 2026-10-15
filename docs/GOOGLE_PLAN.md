@@ -377,3 +377,16 @@ Each milestone follows the existing process: tests, then `/simplify`, `/code-rev
 2. Default Drive access: full `drive` (restricted, can search all files) or `drive.file` only. **Recommended: full `drive` for private use.**
 3. Rename the Hermes MCP key from `m365` to `broker365` now that it serves both providers? Tool names inside Hermes would change from `mcp_m365_*` to `mcp_broker365_*`.
 4. Should the archived Hermes `google-workspace` skill be removed once this works, to avoid two Google integrations?
+
+## 8e. Live smoke of G4 Slides and G5 (2026-10-15, personal Gmail)
+- Slides 37/37 with the rest of G4; Gmail, Calendar, Tasks and Contacts 39/39
+  (draft, discard, send-to-self, read, attachment round trip, threaded reply, labels,
+  trash; timed/all-day events, move keeping duration, switching all-day <-> timed,
+  free/busy; tasks create/complete/hidden; contacts list/create/search).
+- Findings fixed: a later incremental grant listed `drive` but not `spreadsheets` /
+  `documents`, while the Sheets/Docs APIs still accepted the token, so full Drive now
+  implies gsheets/gdocs/gslides for consent checks (audit still records what was granted).
+  A note to self is replied to self. Occasional ReadTimeout / dropped connections: safe
+  reads (and requests that never left) are retried twice within MAX_TOTAL_WAIT; PUT/POST
+  are not resent once they may have reached the server.
+- There is no delete tool for tasks or contacts: smoke-test leftovers are removed by hand.

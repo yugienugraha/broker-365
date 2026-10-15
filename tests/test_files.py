@@ -148,9 +148,10 @@ def test_network_error_is_broker_error(httpx_mock):
 
     from broker365.errors import NetworkError
 
-    httpx_mock.add_exception(httpx.ConnectTimeout("boom"))
+    httpx_mock.add_exception(httpx.ConnectTimeout("boom"), is_reusable=True)
     with pytest.raises(NetworkError, match="ConnectTimeout"):
         files.files_get("ABC!1")
+    assert len(httpx_mock.get_requests()) == 3  # first try + NETWORK_RETRIES
 
 
 def test_download_uses_preauthenticated_url(httpx_mock):

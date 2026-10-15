@@ -66,6 +66,12 @@ _SCOPE_ALIASES = {
     "email": "https://www.googleapis.com/auth/userinfo.email",
     "profile": "https://www.googleapis.com/auth/userinfo.profile",
 }
+# Full Drive access also authorizes the Sheets, Docs and Slides APIs (verified live, Oct
+# 2026). Google may leave those scopes out of a later grant when Drive covers them.
+_DRIVE = "https://www.googleapis.com/auth/drive"
+_IMPLIED_BY_DRIVE = tuple(
+    f"https://www.googleapis.com/auth/{s}" for s in ("spreadsheets", "documents", "presentations")
+)
 _ERROR_CODE = re.compile(r"[a-z_]{1,40}")
 
 _lock = threading.Lock()  # read-modify-write of the token store (MCP runs tools in threads)
@@ -219,7 +225,14 @@ def scopes_for(bundles: list[str]) -> list[str]:
 
 
 def _granted_bundles(scopes: list[str]) -> list[str]:
+    """Bundles Google actually granted (what audit entries and account listings report)."""
     return config.granted_bundles(scopes, config.GOOGLE_SCOPE_BUNDLES, _norm)
+
+
+def _usable_bundles(scopes: list[str]) -> list[str]:
+    """Bundles a token can be used for: the granted ones plus those full Drive implies."""
+    implied = _IMPLIED_BY_DRIVE if _DRIVE in {_norm(s) for s in scopes} else ()
+    return _granted_bundles([*scopes, *implied])
 
 
 # ---- HTTP -------------------------------------------------------------------------------
@@ -589,7 +602,7 @@ class GoogleProvider:
         if bundle not in config.GOOGLE_SCOPE_BUNDLES:
             raise Broker365Error(f"Unknown Google scope bundle '{bundle}'")
         rec = _account(username)
-        if bundle != "core" and bundle not in _granted_bundles(rec.get("scopes", [])):
+        if bundle != "core" and bundle not in _usable_bundles(rec.get("scopes", [])):
             raise ConsentRequired(bundle, PROVIDER)
         key = rec["email"].lower()
         if token := _memo_hit(key):
@@ -611,7 +624,7 @@ class GoogleProvider:
         if bundle not in config.GOOGLE_SCOPE_BUNDLES:
             return False
         rec = _account(username)  # not signed in / no default: its own error, not consent
-        return bundle == "core" or bundle in _granted_bundles(rec.get("scopes", []))
+        return bundle == "core" or bundle in _usable_bundles(rec.get("scopes", []))
 
     def invalidate_token(self, username: str | None = None) -> None:
         forget_token(username)

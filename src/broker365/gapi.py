@@ -161,6 +161,7 @@ def _send(
     unread for the caller (who must close the response); error bodies are always read."""
     client = transport.http()
     start, attempt = time.monotonic(), 0
+    net = transport.NetworkRetries(start, enabled=server_retries)
     while True:
         try:
             req = client.build_request(method, url, headers=headers, **kw)
@@ -168,6 +169,8 @@ def _send(
             if stream and resp.is_error:
                 resp.read()
         except httpx.HTTPError as exc:
+            if net.retry(exc, method, idempotent):  # seen live: occasional ReadTimeouts
+                continue
             raise NetworkError(f"Network error talking to Google: {type(exc).__name__}") from exc
         if (
             attempt == MAX_RETRIES

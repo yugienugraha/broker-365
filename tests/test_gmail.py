@@ -417,8 +417,16 @@ def test_reply_to_own_message_goes_to_its_recipients(httpx_mock):
     assert msg["To"] == "ann@x.com" and msg["Cc"] == "bob@x.com"
 
 
-def test_reply_never_falls_back_to_self(httpx_mock):
+def test_reply_to_a_note_to_self_goes_to_self(httpx_mock):
+    # Seen live: a mail sent to yourself is replied to yourself, as in Gmail's UI.
     reply_setup(httpx_mock, From="me@gmail.com", To="ME@gmail.com", Subject="Note to self")
+    httpx_mock.add_response(**at("POST", f"{GMAIL}/drafts"), json={"id": "D5"})
+    gmail.gmail_reply("M1", "x")
+    assert parse_raw(sent(httpx_mock, "POST", f"{GMAIL}/drafts")[0])["To"] == "me@gmail.com"
+
+
+def test_reply_without_any_recipient_is_refused(httpx_mock):
+    reply_setup(httpx_mock, From="me@gmail.com", Subject="Unaddressed")
     with pytest.raises(Broker365Error, match="no one else to reply to"):
         gmail.gmail_reply("M1", "x")
     assert sent(httpx_mock, "POST") == []
@@ -457,3 +465,9 @@ def test_label_refuses_trash_and_spam(httpx_mock, label):
     with pytest.raises(Broker365Error, match="gmail_trash"):
         gmail.gmail_label("M1", add=[label])
     assert httpx_mock.get_requests() == []
+
+
+def test_reply_to_header_pointing_at_self_is_not_a_note_to_self(httpx_mock):
+    reply_setup(httpx_mock, From="forms@service.com", Reply_To="me@gmail.com", Subject="Form")
+    with pytest.raises(Broker365Error, match="no one else to reply to"):
+        gmail.gmail_reply("M1", "x")

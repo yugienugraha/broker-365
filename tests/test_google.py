@@ -880,6 +880,16 @@ def test_has_consent_reads_granted_bundles_without_network(httpx_mock):
         REAL_HAS_CONSENT(GP, "gdrive", "someone@else.com")
 
 
+def test_full_drive_scope_implies_sheets_docs_slides():
+    # Seen live: a later grant listed `drive` but dropped spreadsheets/documents, and the
+    # Sheets/Docs APIs still accepted the token.
+    drive = ["openid", "https://www.googleapis.com/auth/drive"]
+    assert {"gdrive", "gsheets", "gdocs", "gslides"} <= set(google._usable_bundles(drive))
+    app_only = ["openid", "https://www.googleapis.com/auth/drive.file"]
+    assert "gsheets" not in google._usable_bundles(app_only)
+    assert google._granted_bundles(drive) == ["gdrive"]  # audit reports what Google granted
+
+
 def test_tool_precheck_reports_sign_in_not_consent(monkeypatch):
     from broker365 import services
 

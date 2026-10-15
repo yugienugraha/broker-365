@@ -63,10 +63,13 @@ def _send(
     transient_left = TRANSIENT_RETRIES if method in SAFE or idempotent else 0
     start = time.monotonic()
     attempt, lock_deadline = 0, start + LOCK_WAIT
+    net = transport.NetworkRetries(start)
     while True:
         try:
             resp = transport.http().request(method, url, headers=headers, **kw)
         except httpx.HTTPError as exc:
+            if net.retry(exc, method, idempotent):
+                continue
             raise NetworkError(f"Network error talking to Microsoft: {type(exc).__name__}") from exc
         if time.monotonic() - start > MAX_TOTAL_WAIT:
             break  # overall cap across all retry tiers

@@ -406,7 +406,8 @@ def gmail_reply(
     }
     m = _g().get(_msg_url(message_id), params=params)
     h = _headers(m.get("payload"))
-    if me in {a.lower() for a in _addrs(h.get("from", ""))}:
+    own = me in {a.lower() for a in _addrs(h.get("from", ""))}
+    if own:
         # Our own message (e.g. from Sent): like Gmail, reply to its original recipients.
         to_candidates, cc_candidates = _addrs(h.get("to", "")), _addrs(h.get("cc", ""))
     else:
@@ -418,6 +419,8 @@ def gmail_reply(
         if a.lower() not in seen:
             seen.add(a.lower())
             to.append(a)
+    if not to and own and to_candidates:
+        to = [me]  # our own note to self (seen live): Gmail replies to yourself as well
     if not to:
         raise Broker365Error("This message has no one else to reply to")
     cc: list[str] = []

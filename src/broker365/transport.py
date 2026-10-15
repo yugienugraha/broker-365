@@ -8,6 +8,7 @@ quoting and the JSON verb helpers. Each provider keeps its own retry loop and ho
 from __future__ import annotations
 
 import math
+import ssl
 import time
 from typing import Any
 from urllib.parse import quote
@@ -18,7 +19,47 @@ from broker365.errors import Broker365Error
 
 IDEMPOTENT = {"GET", "PUT", "DELETE", "HEAD"}
 MAX_RETRIES = 4
+NETWORK_RETRIES = 2
 MAX_TOTAL_WAIT = 120.0  # cap on time spent retrying one request across all tiers
+SAFE = {"GET", "HEAD"}
+# The request never reached the server, so resending is safe for any method.
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+# Transient failures after sending: timeouts, resets, a connection dropped mid-response.
+_TRANSIENT = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+
+
+def network_retryable(exc: httpx.HTTPError, method: str, idempotent: bool = False) -> bool:
+    """Whether a transport failure may be retried: when the request was never sent (any
+    method), or for a transient failure of a safe read or a caller-marked idempotent request.
+    PUT/DELETE are not retried by default: an upload with conflict rules or If-Match, or an
+    upload-session chunk, may already have taken effect. TLS failures are never retried."""
+    cause = exc.__cause__ or exc.__context__
+    if isinstance(cause, ssl.SSLError):
+        return False
+    if isinstance(exc, _NOT_SENT):
+        return True
+    return isinstance(exc, _TRANSIENT) and (idempotent or method in SAFE)
+
+
+class NetworkRetries:
+    """Retry budget for transport failures of one request (shared by graph and gapi)."""
+
+    def __init__(self, start: float, enabled: bool = True) -> None:
+        self.start, self.left = start, NETWORK_RETRIES if enabled else 0
+
+    def retry(self, exc: httpx.HTTPError, method: str, idempotent: bool = False) -> bool:
+        """Sleep and return True if the failed request should be sent again."""
+        if (
+            not self.left
+            or time.monotonic() - self.start > MAX_TOTAL_WAIT
+            or not network_retryable(exc, method, idempotent)
+        ):
+            return False
+        attempt = NETWORK_RETRIES - self.left  # 0-based, as retry_delay expects
+        self.left -= 1
+        _sleep(retry_delay(None, attempt))
+        return True
+
 
 _sleep = time.sleep  # patched in tests
 _http: httpx.Client | None = None

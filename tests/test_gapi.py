@@ -197,9 +197,30 @@ def test_total_wait_cap(httpx_mock, monkeypatch):
 
 
 def test_network_error(httpx_mock):
-    httpx_mock.add_exception(httpx.ConnectTimeout("boom"))
+    httpx_mock.add_exception(httpx.ConnectTimeout("boom"), is_reusable=True)
     with pytest.raises(NetworkError, match="Network error talking to Google: ConnectTimeout"):
         g().get(FILE_URL)
+    assert len(httpx_mock.get_requests()) == 1 + transport.NETWORK_RETRIES
+
+
+def test_get_retries_a_dropped_connection(httpx_mock):
+    # Seen live: occasional ReadTimeout / RemoteProtocolError on a pooled connection.
+    httpx_mock.add_exception(httpx.ReadTimeout("slow"))
+    httpx_mock.add_response(url=FILE_URL, json={"id": "F1"})
+    assert g().get(FILE_URL) == {"id": "F1"}
+
+
+def test_post_is_not_resent_after_it_may_have_been_received(httpx_mock):
+    httpx_mock.add_exception(httpx.RemoteProtocolError("dropped"))
+    with pytest.raises(NetworkError, match="RemoteProtocolError"):
+        g().post(FILE_URL, json={})
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_post_is_retried_when_it_never_left(httpx_mock):
+    httpx_mock.add_exception(httpx.ConnectError("refused"))
+    httpx_mock.add_response(method="POST", url=FILE_URL, json={"id": "F2"})
+    assert g().post(FILE_URL, json={}) == {"id": "F2"}
 
 
 # ---- auth errors ------------------------------------------------------------------------
@@ -625,3 +646,23 @@ def test_seg_refuses_dot_segments(value):
 
 def test_seg_keeps_ids_with_dots():
     assert transport.seg("a.b") == "a.b" and transport.seg(".x") == ".x"
+
+
+def test_put_is_not_resent_after_a_timeout(httpx_mock):
+    # An upload with conflict rules / If-Match, or a session chunk, may already have landed.
+    httpx_mock.add_exception(httpx.ReadTimeout("slow"))
+    with pytest.raises(NetworkError, match="ReadTimeout"):
+        g().request("PUT", FILE_URL, content=b"x")
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_tls_failures_are_not_retried(httpx_mock):
+    import ssl
+
+    try:
+        raise ssl.SSLCertVerificationError("bad cert")
+    except ssl.SSLError as cause:
+        exc = httpx.ConnectError("tls")
+        exc.__cause__ = cause
+    assert not transport.network_retryable(exc, "GET")
+    assert transport.network_retryable(httpx.ConnectError("refused"), "POST")
