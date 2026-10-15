@@ -3,26 +3,17 @@
 from __future__ import annotations
 
 import base64
-import html
-import re
 from typing import Any, Literal
 
 from broker365 import graph
-from broker365.errors import Broker365Error
-from broker365.services import files, tool
-from broker365.services._shapes import addr, recipients
+from broker365.services import _mail, tool
+from broker365.services._shapes import addr, html_to_text, recipients
 
-__all__ = ["html_to_text", "recipients"]
-
-ATTACHMENT_MAX = 3 * 1024 * 1024
 LIST_SELECT = "id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview,webLink"
-DRAFT_NOTE = (
-    "Draft created, not sent. Show it to the user; once they approve, call "
-    "mail_send_draft with this draft_id (or move it to deleteditems to discard)."
-)
-_DROP = re.compile(r"<(script|style|head)\b.*?</\1\s*>", re.I | re.S)
-_BREAK = re.compile(r"<br\s*/?>|</(p|div|li|tr|h[1-6]|table|blockquote)\s*>", re.I)
-_TAG = re.compile(r"<[^>]+>")
+SEND_DRAFT = "mail_send_draft"
+DISCARD = "or move it to deleteditems to discard"
+DRAFT_NOTE = _mail.draft_note(SEND_DRAFT, DISCARD)
+UPLOAD_HINT = "Upload it to OneDrive (files_upload) and send a link from files_share instead."
 
 
 def _g() -> graph.GraphClient:
@@ -33,17 +24,8 @@ def _msg_path(message_id: str) -> str:
     return f"/me/messages/{graph.seg(message_id, 'message id')}"
 
 
-def html_to_text(content: str) -> str:
-    text = _BREAK.sub("\n", _DROP.sub("", content))
-    text = html.unescape(_TAG.sub("", text)).replace("\xa0", " ")
-    text = re.sub(r"[ \t]+", " ", text)
-    return re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
-
-
 def _to(addrs: list[str]) -> list[dict[str, Any]]:
-    if not addrs:
-        raise Broker365Error("At least one recipient is required")
-    return recipients(addrs)
+    return recipients(_mail.required_emails(addrs))
 
 
 def _summarize(m: dict[str, Any]) -> dict[str, Any]:
@@ -60,23 +42,13 @@ def _summarize(m: dict[str, Any]) -> dict[str, Any]:
 
 
 def _draft_result(d: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "sent": False,
-        "draft_id": d.get("id"),
-        "web_link": d.get("webLink"),
-        "note": DRAFT_NOTE,
-    }
+    return _mail.draft_result(d.get("id"), d.get("webLink"), SEND_DRAFT, DISCARD)
 
 
 def _file_attachments(paths: list[str] | None) -> list[dict[str, Any]]:
     out = []
     for p in paths or []:
-        src = files.read_local(p)
-        if src.stat().st_size > ATTACHMENT_MAX:
-            raise Broker365Error(
-                f"{src.name} is larger than 3 MB. Upload it to OneDrive (files_upload) and "
-                "send a link from files_share instead."
-            )
+        src = _mail.read_attachment(p, UPLOAD_HINT)
         out.append(
             {
                 "@odata.type": "#microsoft.graph.fileAttachment",

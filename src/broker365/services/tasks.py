@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Literal
 
 from broker365 import graph
 from broker365.errors import Broker365Error
 from broker365.services import tool
-from broker365.services._shapes import date_time, date_time_tz
-
-_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+from broker365.services._shapes import date_time, date_time_tz, iso_date
 
 
 def _g() -> graph.GraphClient:
@@ -82,8 +79,7 @@ def tasks_create(
     """Create a To Do task. `due` is a date YYYY-MM-DD; list_id defaults to the default list."""
     task: dict[str, Any] = {"title": title, "importance": importance}
     if due:
-        if not _DATE.match(due):
-            raise Broker365Error("due must be a date in YYYY-MM-DD format")
+        iso_date(due, "due must be a date in YYYY-MM-DD format")
         task["dueDateTime"] = date_time_tz(f"{due}T00:00:00", "UTC")
     if body:
         task["body"] = {"contentType": "text", "content": body}

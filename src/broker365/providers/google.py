@@ -426,6 +426,13 @@ def _memo_hit(key: str) -> str | None:
     return hit[0] if hit and hit[1] > time.time() else None
 
 
+def account_email(username: str | None = None) -> str:
+    """The stored email address of `username` (default: the default account), as Google
+    reported it at sign-in. ReauthRequired / Broker365Error when it can't be resolved. Served
+    from the decoded-store cache (_load): no extra decryption while the file is unchanged."""
+    return _account(username)["email"]
+
+
 def forget_token(username: str | None = None) -> None:
     """Drop the memoized access token of `username` (default: the default account) so the
     next get_token refreshes it, e.g. after a Google API rejected it with 401."""

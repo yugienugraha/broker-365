@@ -886,3 +886,11 @@ def test_tool_precheck_reports_sign_in_not_consent(monkeypatch):
     monkeypatch.setattr(google.GoogleProvider, "has_consent", REAL_HAS_CONSENT)
     with pytest.raises(ReauthRequired):
         services.call("gdocs_create", title="T")
+
+
+def test_account_email_does_not_decode_the_store_again(httpx_mock, monkeypatch):
+    sign_in(httpx_mock)
+    assert google.account_email() == "Pat@Gmail.com"  # decoded and cached
+    monkeypatch.setattr(google, "_read", lambda: pytest.fail("store decoded again"))
+    assert google.account_email() == "Pat@Gmail.com"
+    assert google.account_email("PAT@gmail.com") == "Pat@Gmail.com"

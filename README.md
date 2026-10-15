@@ -118,6 +118,9 @@ broker365 call word_create '{"remote_path": "/Notes.docx", "markdown": "# Hello\
 | Google Sheets (`gsheets`) | `gsheets_create`, `gsheets_list_tabs`, `gsheets_add_tab`, `gsheets_read_range`, `gsheets_write_range`, `gsheets_append_rows`, `gsheets_clear_range` | Live edits through the Sheets API; formulas work (`USER_ENTERED`); clearing is destructive |
 | Google Docs (`gdocs`) | `gdocs_create`, `gdocs_read`, `gdocs_append`, `gdocs_replace_text`, `gdocs_fill_template` | Create from Markdown; `{{key}}` templates; revision-guarded replace |
 | Google Slides (`gslides`) | `gslides_create`, `gslides_read`, `gslides_add_slide`, `gslides_replace_text` | Decks from an outline (title + body or bullets) |
+| Gmail (`gmail`) | `gmail_list`, `gmail_search`, `gmail_read`, `gmail_download_attachment`, `gmail_draft`, `gmail_send`, `gmail_send_draft`, `gmail_discard_draft`, `gmail_reply`, `gmail_label`, `gmail_trash` | Send/reply create a draft unless `confirm=true`; trash only, never a permanent delete |
+| Google Calendar (`gcalendar`) | `gcal_list`, `gcal_create`, `gcal_update`, `gcal_delete`, `gcal_free_busy` | Time-zone aware; attendees are emailed only with `send_updates=true` |
+| Google Tasks / Contacts (`gtasks`, `gcontacts`) | `gtasks_lists`, `gtasks_list`, `gtasks_create`, `gtasks_complete`; `gcontacts_list`, `gcontacts_search`, `gcontacts_create` | |
 | Google Drive (`gdrive`) | `gdrive_list`, `gdrive_search`, `gdrive_get`, `gdrive_read_text`, `gdrive_download`, `gdrive_export`, `gdrive_upload`, `gdrive_write_text`, `gdrive_mkdir`, `gdrive_move`, `gdrive_copy`, `gdrive_trash`, `gdrive_share` | Items by file id or path (`/Reports/q3.pdf`). Docs/Sheets/Slides are read with `gdrive_read_text` or exported (pdf, docx, xlsx, pptx, …). Trash only, never a permanent delete; `gdrive_share` and `gdrive_trash` are destructive |
 
 The design rationale is in [docs/PLAN.md](docs/PLAN.md).

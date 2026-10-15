@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -132,6 +133,20 @@ def _folder_id(folder: str) -> str:
     return get_item(folder)["id"] if folder.startswith("/") else folder
 
 
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10))}
+
+
+def local_name(name: str | None, fallback: str = "download") -> str:
+    """A remote name (Drive file, mail attachment …) as one safe local file name: path
+    separators, control and Windows-reserved characters become "_", and Windows device names
+    (CON, NUL, COM1, LPT1 …, with or without an extension) get a "_" prefix. The same on
+    every platform, so a name means the same file everywhere."""
+    cleaned = re.sub(r'[\x00-\x1f/\\:*?"<>|]', "_", name or "").strip().strip(".")
+    if cleaned.split(".", 1)[0].strip().upper() in _RESERVED:
+        cleaned = "_" + cleaned
+    return cleaned or fallback
+
+
 def write_local(path: str | None, default_name: str, data: bytes, overwrite: bool) -> str:
     """Save bytes to a sandboxed local path (see stream_local)."""
     return stream_local(path, default_name, overwrite, lambda out: out.write(data))
@@ -142,8 +157,9 @@ def stream_local(
 ) -> str:
     """Like write_local for content that arrives in pieces: `fill` writes into a temporary
     file in the destination folder, which then replaces the destination, so a failed or
-    oversized download leaves nothing behind."""
-    dest = config.resolve_local(path, default_name)
+    oversized download leaves nothing behind. `default_name` (used when `path` is empty)
+    comes from the remote side, so it is reduced to a safe single file name first."""
+    dest = config.resolve_local(path, local_name(default_name))
     if dest.exists() and not overwrite:
         raise Broker365Error(f"{dest} already exists (pass overwrite=true to replace it)")
     dest.parent.mkdir(parents=True, exist_ok=True)

@@ -29,6 +29,10 @@ SERVICE_MODULES = (
     "gsheets",
     "gdocs",
     "gslides",
+    "gmail",
+    "gcalendar",
+    "gtasks",
+    "gcontacts",
 )
 
 

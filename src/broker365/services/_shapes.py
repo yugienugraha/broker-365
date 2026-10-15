@@ -1,14 +1,20 @@
-"""Shared resource shapes: email addresses, recipients, dateTimeTimeZone (Graph) and 2-D cell
-value arrays (Excel and Google Sheets)."""
+"""Shared resource shapes and conversions used by both providers: email addresses and
+recipients, HTML → text, datetimes (dateTimeTimeZone, UTC windows) and 2-D cell arrays."""
 
 from __future__ import annotations
 
+import html
 import re
+from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from broker365.errors import Broker365Error
 
 _EMAIL = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
+_DROP = re.compile(r"<(script|style|head)\b.*?</\1\s*>", re.I | re.S)
+_BREAK = re.compile(r"<br\s*/?>|</(p|div|li|tr|h[1-6]|table|blockquote)\s*>", re.I)
+_TAG = re.compile(r"<[^>]+>")
 
 
 def validate_emails(addrs: list[str] | None) -> list[str]:
@@ -64,3 +70,48 @@ def check_2d(values: Any) -> list[list[Any]]:
             if v is not None and not isinstance(v, str | int | float | bool):
                 raise Broker365Error("Cell values must be strings, numbers, booleans or null")
     return values
+
+
+def html_to_text(content: str) -> str:
+    """Readable plain text from an HTML mail body or page."""
+    text = _BREAK.sub("\n", _DROP.sub("", content))
+    text = html.unescape(_TAG.sub("", text)).replace("\xa0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
+
+
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
+
+
+def parse_iso(value: str) -> datetime:
+    """An ISO 8601 datetime (with or without offset), or Broker365Error."""
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise Broker365Error(f"Not an ISO 8601 datetime: {value!r}") from exc
+
+
+def iso_date(value: str, message: str | None = None) -> date:
+    """A real calendar date written YYYY-MM-DD (2026-13-45 is refused), or Broker365Error
+    with `message`."""
+    try:
+        if isinstance(value, str) and _DATE.fullmatch(value):
+            return date.fromisoformat(value)
+    except ValueError:
+        pass
+    raise Broker365Error(message or f"Not a date in YYYY-MM-DD format: {value!r}")
+
+
+def to_utc(value: str, time_zone: str) -> str:
+    """An ISO 8601 datetime as UTC ('...Z'). Offset-less values are read in `time_zone`
+    (calendar APIs would otherwise take them as UTC)."""
+    dt = parse_iso(value)
+    if dt.tzinfo is None:
+        try:
+            dt = dt.replace(tzinfo=UTC if time_zone.upper() == "UTC" else ZoneInfo(time_zone))
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise Broker365Error(
+                f"Unknown time zone {time_zone!r} for start/end; use an IANA name such as "
+                "'Asia/Jakarta', or include a UTC offset in the datetimes"
+            ) from exc
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

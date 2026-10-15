@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from broker365 import graph
 from broker365.errors import Broker365Error, GraphError
@@ -16,6 +14,7 @@ from broker365.services._shapes import (
     date_time,
     date_time_tz,
     recipients,
+    to_utc,
     validate_emails,
 )
 
@@ -55,24 +54,6 @@ def _summarize(e: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _utc(value: str, time_zone: str) -> str:
-    """calendarView reads offset-less times as UTC (Prefer only shapes the response), so
-    resolve `value` in `time_zone` ourselves."""
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise Broker365Error(f"Not an ISO 8601 datetime: {value!r}") from exc
-    if dt.tzinfo is None:
-        try:
-            dt = dt.replace(tzinfo=UTC if time_zone.upper() == "UTC" else ZoneInfo(time_zone))
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise Broker365Error(
-                f"Unknown time zone {time_zone!r} for start/end; use an IANA name such as "
-                "'Asia/Jakarta', or include a UTC offset in the datetimes"
-            ) from exc
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 @tool("calendar")
 def calendar_list(
     start: str, end: str, limit: int = 50, time_zone: str = "UTC"
@@ -80,8 +61,8 @@ def calendar_list(
     """List calendar events (recurring ones expanded) between `start` and `end`, ISO 8601
     datetimes such as 2026-10-14T00:00:00. Results are returned in `time_zone`."""
     params = {
-        "startDateTime": _utc(start, time_zone),
-        "endDateTime": _utc(end, time_zone),
+        "startDateTime": to_utc(start, time_zone),
+        "endDateTime": to_utc(end, time_zone),
         "$select": EVENT_SELECT,
         "$orderby": "start/dateTime",
     }

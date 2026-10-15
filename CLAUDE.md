@@ -41,7 +41,10 @@ src/broker365/
                   gsheets / gdocs / gslides (Sheets v4, Docs v1, Slides v1; files found and
                   created through gdrive's public helpers; _gnative.Native = per-product
                   client/url/resolve/revision-guarded update). @tool(requires=...) = other
-                  bundles checked with Provider.has_consent before the tool runs
+                  bundles checked with Provider.has_consent before the tool runs;
+                  gmail / gcalendar / gtasks / gcontacts (Gmail v1 raw RFC 5322, draft-first
+                  sends; Calendar v3; Tasks v1; People v1); _mail.py = mail policy shared by
+                  mail.py and gmail.py (recipients, 3 MB attachments, draft result)
   cli.py          Typer app, entry point `broker365`
   mcp_server.py   MCP stdio server (`broker365 mcp`)
   audit.py        JSON-lines audit.log of write tools and admin:* actions (targets only, never content;

@@ -312,3 +312,26 @@ def test_write_local_is_atomic_and_keeps_overwrite_rule(monkeypatch):
         files.write_local("r.txt", "r.txt", b"new", overwrite=True)
     assert target.read_bytes() == b"old"  # untouched, and no temp file left behind
     assert sorted(p.name for p in config.workspace().iterdir()) == ["r.txt"]
+
+
+def test_download_default_name_is_sanitised(httpx_mock):
+    httpx_mock.add_response(url=f"{G}/me/drive/items/ABC!1", json={**ITEM, "name": 'a:b?"c.txt'})
+    httpx_mock.add_response(url=f"{G}/me/drive/items/ABC!1/content", content=b"x")
+    out = files.files_download("ABC!1")
+    assert out["local_path"] == str(config.workspace() / "a_b__c.txt")
+
+
+@pytest.mark.parametrize(
+    "remote, local",
+    [
+        ("CON.txt", "_CON.txt"),
+        ("nul", "_nul"),
+        ("com1.tar.gz", "_com1.tar.gz"),
+        ("Lpt9 .log", "_Lpt9 .log"),
+        ("CONSOLE.txt", "CONSOLE.txt"),
+        ("lpt10", "lpt10"),
+        ("aux_report.pdf", "aux_report.pdf"),
+    ],
+)
+def test_local_name_avoids_windows_device_names(remote, local):
+    assert files.local_name(remote) == local

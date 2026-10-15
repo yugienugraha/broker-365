@@ -97,6 +97,22 @@ Terminal alternative: `broker365 login --provider google`.
 - Pass the `revisionId` from a read as `revision_id` to the replace tools: if someone edited
   the file meanwhile you get a conflict and nothing changes. Re-read and retry.
 
+## Gmail, Google Calendar, Tasks and Contacts (scopes `gmail`, `gcalendar`, `gtasks`, `gcontacts`)
+- **Gmail:** `gmail_list` (by label, e.g. INBOX), `gmail_search` (Gmail syntax such as
+  `from:ann has:attachment newer_than:7d`), `gmail_read` (plain-text body and attachment ids),
+  `gmail_download_attachment` (into the workspace), `gmail_draft`, `gmail_label` (add/remove
+  labels by name, mark read, archive), `gmail_trash` (to the Trash, never a permanent delete).
+- **Sending is draft-first, like Outlook:** `gmail_send` and `gmail_reply` create a draft unless
+  `confirm=true`. Show the draft to the user and, only after their explicit approval, send
+  exactly that draft with `gmail_send_draft(draft_id)`; if they reject it, discard it with
+  `gmail_discard_draft(draft_id)` (moves it to the Trash). `gmail_reply(reply_all=true)` leaves
+  the account's own address out; replying to your own sent message goes to its recipients.
+- **Calendar:** `gcal_list` (start/end ISO datetimes in `time_zone`, recurring events
+  expanded), `gcal_create`, `gcal_update`, `gcal_delete`, `gcal_free_busy`. Attendees are only
+  emailed with `send_updates=true` (`notify=true` for a delete): confirm with the user first.
+- **Tasks:** `gtasks_lists`, `gtasks_list`, `gtasks_create` (due date YYYY-MM-DD),
+  `gtasks_complete`. **Contacts:** `gcontacts_list`, `gcontacts_search`, `gcontacts_create`.
+
 ## SharePoint and OneNote
 - SharePoint (work/school accounts only, scope `sharepoint`): `sharepoint_sites`,
   `sharepoint_drives`, `sharepoint_list`, `sharepoint_download`, `sharepoint_upload`. Site ids

@@ -10,7 +10,7 @@ from broker365 import graph
 from broker365.errors import Broker365Error, GraphError
 from broker365.graph import seg
 from broker365.services import tool
-from broker365.services.mail import html_to_text
+from broker365.services._shapes import html_to_text
 
 
 def _g() -> graph.GraphClient:

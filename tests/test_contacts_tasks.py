@@ -122,3 +122,10 @@ def test_tools_registered_with_flags():
     assert t["calendar_create"].destructive and t["tasks_delete"].destructive
     assert t["mail_draft"].writes and not t["mail_draft"].destructive
     assert not t["mail_list"].writes and not t["tasks_lists"].writes
+
+
+@pytest.mark.parametrize("bad", ["2026-13-45", "2026-02-30"])
+def test_tasks_create_rejects_impossible_dates(bad, httpx_mock):
+    with pytest.raises(Broker365Error, match="due must be a date in YYYY-MM-DD format"):
+        tasks.tasks_create("x", list_id="L", due=bad)
+    assert httpx_mock.get_requests() == []

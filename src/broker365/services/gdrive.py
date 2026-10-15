@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import mimetypes
-import re
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -245,12 +244,6 @@ def _parent_and_leaf(path: str, example: str) -> tuple[dict[str, Any], str]:
     return folder("/" + "/".join(parts[:-1])), parts[-1]
 
 
-def _local_name(name: str | None, fallback: str = "download") -> str:
-    """A Drive name as a single local file name (Drive names may contain '/')."""
-    cleaned = re.sub(r'[\x00-\x1f/\\:*?"<>|]', "_", name or "").strip().strip(".")
-    return cleaned or fallback
-
-
 # ---- content ----------------------------------------------------------------------------
 
 
@@ -282,7 +275,7 @@ def _is_text(meta: dict[str, Any]) -> bool:
     )
 
 
-def _upload_mime(name: str) -> str:
+def upload_mime(name: str) -> str:
     """MIME type for an upload; common types are fixed here because mimetypes depends on
     the platform (on Windows, the registry)."""
     ext = PurePosixPath(name).suffix.lower()
@@ -490,7 +483,7 @@ def gdrive_download(item: str, dest: str | None = None, overwrite: bool = False)
     url = _file_url(meta["id"])
     local = files.stream_local(
         dest,
-        _local_name(meta.get("name")),
+        meta.get("name") or "download",
         overwrite,
         lambda out: _g().download_to(url, out, MEDIA_PARAMS),
     )
@@ -521,7 +514,7 @@ def gdrive_export(
             params = {"mimeType": FORMAT_MIME[format]}
             _g().download_to(_export_url(meta), out, params, EXPORT_LIMIT)
 
-    name = f"{_local_name(meta.get('name'), 'export')}.{format}"
+    name = f"{meta.get('name') or 'export'}.{format}"
     return {
         "source": summarize(meta),
         "format": format,
@@ -549,7 +542,7 @@ def gdrive_upload(
             raise Broker365Error(f"convert=true supports {', '.join(CONVERT)} files")
     if name is None:
         name = src.stem if convert else src.name
-    return put(folder(remote_folder), name, src, _upload_mime(src.name), conflict, target_mime)
+    return put(folder(remote_folder), name, src, upload_mime(src.name), conflict, target_mime)
 
 
 @tool(BUNDLE, GOOGLE, writes=True, audit=("conflict",))
@@ -557,7 +550,7 @@ def gdrive_write_text(remote_path: str, text: str, conflict: Conflict = "fail") 
     """Create a text file (txt, md, csv, json, …) at an absolute Drive path from a string.
     conflict: 'fail', 'replace' or 'rename', as for gdrive_upload."""
     parent, name = _parent_and_leaf(remote_path, "/Notes/todo.md")
-    mime = _upload_mime(name)
+    mime = upload_mime(name)
     if not mime.startswith("text/") and mime not in TEXT_MIMES:
         mime = "text/plain"
     return put(parent, name, text.encode("utf-8"), mime, conflict)

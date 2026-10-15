@@ -58,6 +58,14 @@ SCOPE_REASONS = {"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}
 _STALE_REVISION = re.compile(r"required revision id .* does not match", re.IGNORECASE)
 MAX_REDIRECTS = 5
 PAGE_MAX = 1000  # Drive's largest pageSize
+# Page-size parameter and its largest value per API (longest matching URL prefix wins).
+PAGE_PARAMS = {
+    f"{BASE}/drive/": ("pageSize", 1000),
+    f"{BASE}/calendar/": ("maxResults", 2500),
+    "https://gmail.googleapis.com/": ("maxResults", 500),
+    "https://tasks.googleapis.com/": ("maxResults", 100),
+    "https://people.googleapis.com/": ("pageSize", 1000),
+}
 MULTIPART_MAX = 5 * 1024 * 1024  # larger uploads go through a resumable session
 UPLOAD_CHUNK = 256 * 1024 * 32  # 8 MiB; must be a multiple of 256 KiB
 DOWNLOAD_MAX = 1024 * 1024 * 1024  # default cap on the bytes of one download
@@ -278,13 +286,19 @@ class GoogleClient(transport.JsonVerbs):
         items_key: str = "files",
         limit: int = 100,
         flags: dict[str, bool] | None = None,
+        size_param: str | None = None,
+        page_max: int | None = None,
     ) -> list[Any]:
         """Up to `limit` items of `items_key` across nextPageToken pages. Each key of `flags`
-        (e.g. "incompleteSearch") is set to True when any page had it true."""
+        (e.g. "incompleteSearch") is set to True when any page had it true. The page-size
+        parameter and its maximum come from PAGE_PARAMS for the URL unless given."""
+        match = max((p for p in PAGE_PARAMS if url.startswith(p)), key=len, default=None)
+        default_param, default_max = PAGE_PARAMS[match] if match else ("pageSize", PAGE_MAX)
+        size_param, page_max = size_param or default_param, page_max or default_max
         out: list[Any] = []
         token = None
         while len(out) < limit:
-            p = {**(params or {}), "pageSize": min(limit - len(out), PAGE_MAX)}
+            p = {**(params or {}), size_param: min(limit - len(out), page_max)}
             if token:
                 p["pageToken"] = token
             page = self.get(url, params=p) or {}

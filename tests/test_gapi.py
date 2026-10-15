@@ -592,3 +592,25 @@ def test_guarded_failed_precondition_keeps_googles_text(httpx_mock):
         g().post(FILE_URL, json={}, guarded=True)
     assert not isinstance(exc.value, ConflictError)
     assert str(exc.value) == "Google 400 FAILED_PRECONDITION: Precondition check failed."
+
+
+@pytest.mark.parametrize(
+    "url, param, value",
+    [
+        ("https://gmail.googleapis.com/gmail/v1/users/me/messages", "maxResults", "500"),
+        ("https://tasks.googleapis.com/tasks/v1/lists/@default/tasks", "maxResults", "100"),
+        ("https://www.googleapis.com/calendar/v3/calendars/primary/events", "maxResults", "2500"),
+        ("https://people.googleapis.com/v1/people/me/connections", "pageSize", "1000"),
+        (f"{DRIVE}/files", "pageSize", "1000"),
+    ],
+)
+def test_paged_uses_each_apis_page_parameter(url, param, value, httpx_mock):
+    httpx_mock.add_response(url=re.compile(re.escape(url) + r"\?.*"), json={})
+    g().paged(url, None, "items", limit=5000)
+    assert httpx_mock.get_requests()[0].url.params[param] == value
+
+
+def test_paged_explicit_page_parameter_wins(httpx_mock):
+    httpx_mock.add_response(url=re.compile(re.escape(FILE_URL) + r"\?.*"), json={})
+    g().paged(FILE_URL, None, "x", limit=50, size_param="maxResults", page_max=10)
+    assert httpx_mock.get_requests()[0].url.params["maxResults"] == "10"

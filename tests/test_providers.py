@@ -223,7 +223,18 @@ def test_tool_catalog_provider_field():
         t["provider"]
         == (
             "google"
-            if t["name"].startswith(("gdrive_", "gsheets_", "gdocs_", "gslides_"))
+            if t["name"].startswith(
+                (
+                    "gdrive_",
+                    "gsheets_",
+                    "gdocs_",
+                    "gslides_",
+                    "gmail_",
+                    "gcal_",
+                    "gtasks_",
+                    "gcontacts_",
+                )
+            )
             else "microsoft"
         )
         for t in catalog

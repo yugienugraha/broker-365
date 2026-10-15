@@ -7,7 +7,8 @@ import pytest
 
 from broker365 import config
 from broker365.errors import Broker365Error, PathNotAllowed
-from broker365.services import mail
+from broker365.services import _mail, mail
+from broker365.services._shapes import html_to_text
 from tests.conftest import G
 
 
@@ -81,7 +82,7 @@ def test_read_converts_html_and_quotes_id(httpx_mock):
 
 
 def test_html_to_text():
-    assert mail.html_to_text("<p>a</p><p>b&nbsp;c</p><script>x</script>") == "a\nb c"
+    assert html_to_text("<p>a</p><p>b&nbsp;c</p><script>x</script>") == "a\nb c"
 
 
 def test_send_without_confirm_creates_draft(httpx_mock):
@@ -131,7 +132,7 @@ def test_attachment_outside_sandbox(tmp_path):
 
 
 def test_attachment_too_large(monkeypatch):
-    monkeypatch.setattr(mail, "ATTACHMENT_MAX", 3)
+    monkeypatch.setattr(_mail, "ATTACHMENT_MAX", 3)
     (config.workspace() / "big.bin").write_bytes(b"1234")
     with pytest.raises(Broker365Error, match="files_share"):
         mail.mail_send(["bob@contoso.com"], "S", "B", attachments=["big.bin"], confirm=True)

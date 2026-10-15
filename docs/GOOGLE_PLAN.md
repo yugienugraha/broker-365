@@ -5,9 +5,9 @@
 > signs in, tokens stay local, and Hermes gets tools through the same MCP server, CLI and
 > dashboard.
 >
-> Status: G0–G3 done (2026-10-15): sign-in, token storage/refresh and revoke, Drive tools
-> (live smoke passed). G4 (Sheets, Docs, Slides) implemented with mocked tests; live smoke
-> pending.
+> Status: G0–G4 done (2026-10-15): sign-in, token storage/refresh and revoke, Drive, Sheets
+> and Docs tools (live smoke passed; Slides awaits consent). G5 (Gmail, Calendar, Tasks,
+> Contacts) implemented with mocked tests; live smoke pending.
 > Facts below were checked against Google's current docs via
 > Context7 (Identity OAuth 2.0, Drive, Gmail and Sheets API docs, google-auth-library-python).
 
@@ -152,7 +152,7 @@ Safety rules carry over unchanged:
 | G2 ✅ (code) | Google OAuth: loopback CLI login, dashboard callback, chat paste-back; encrypted storage; refresh; revoke on logout | Live sign-in on the owner's Gmail via all three paths; token survives a restart. Implemented 2026-10-15, see §8a; live sign-in still to be checked by the owner |
 | G3 ✅ | `gapi.py` + Drive tools | Live smoke: list/search/upload/download/export. Done 2026-10-15, live-verified on a personal Gmail account, see §8b |
 | G4 ✅ (code) | Sheets, Docs, Slides tools (native batchUpdate) | Live smoke: create sheet, write formulas, read back computed values; doc from Markdown; slides from outline. Implemented 2026-10-15 with mocked tests, see §8c; live smoke pending |
-| G5 | Gmail, Calendar, Tasks, Contacts | Live smoke (read-only on real mail; draft-only send test) |
+| G5 ✅ (code) | Gmail, Calendar, Tasks, Contacts | Live smoke (read-only on real mail; draft-only send test). Implemented 2026-10-15 with mocked tests, see §8d; live smoke pending |
 | G6 | Dashboard provider tabs, Hermes skill + MCP instructions update, docs | Browser test of both providers; `hermes install` registers one server exposing both |
 
 ## 8a. G2 result (2026-10-15)
@@ -300,6 +300,59 @@ Safety rules carry over unchanged:
   Markdown conversion of tables; `TITLE` layout placeholder type `CENTERED_TITLE`; deleting
   the default slide; quoted tab names with non-ASCII characters; Slides consent (the live
   account has only gdrive, gsheets, gdocs).
+
+## 8d. G5 result (2026-10-15, code; live smoke pending)
+- `services/gmail.py` (Gmail v1, bundle `gmail` = gmail.modify), `gcalendar.py` (Calendar v3),
+  `gtasks.py` (Tasks v1), `gcontacts.py` (People v1). Semantics, safety rules and result shapes
+  mirror mail/calendar/tasks/contacts.py. Shared code: `services/_mail.py` (mail policy for
+  Outlook and Gmail: `required_emails`, `read_attachment` with the 3 MB limit,
+  `draft_note`/`draft_result`; each tool drafts unless confirm); `_shapes` (`html_to_text`, `to_utc`, `parse_iso`,
+  `iso_date`, which refuses impossible dates such as 2026-13-45 everywhere);
+  `files.local_name`, applied by `write_local`/`stream_local` to every remote default name
+  (OneDrive, Drive and mail attachments); `gdrive.upload_mime` for attachment types;
+  `gapi.PAGE_PARAMS` (page-size parameter and maximum per API, used by `paged`).
+- Gmail: list/search = `messages.list` (fields `messages/id,nextPageToken`) then one
+  `format=metadata` GET per message with a fields mask, 8 at a time (order kept; at most 100). Read walks the MIME tree: first non-attachment text/plain, else text/html
+  through `html_to_text`, charset from Content-Type; attachments listed with id and part id.
+  Download reads the parts tree (fields mask), looks the attachment up again by id or part
+  id (Gmail may issue a new attachmentId per read), refuses parts over 35 MB before
+  downloading, and saves through `files.write_local`.
+- Composing: `email.message.EmailMessage` (To/Cc/Bcc, plain or HTML with a text alternative,
+  sandboxed attachments ≤ 3 MB), base64url `raw`. Addresses go through `validate_emails`;
+  CR/LF in the subject or extra headers is refused (EmailMessage also refuses it). Send and
+  reply are draft-first (`drafts.create`, same result shape as mail_send) unless `confirm`;
+  `gmail_send_draft` = `drafts.send`; `gmail_discard_draft` moves the draft's message to the
+  Trash (`drafts.get?format=minimal` + `messages.trash`, never `drafts.delete`). Replies keep the thread (`threadId`, In-Reply-To,
+  References, "Re:"); reply-all drops the account's own address (from the provider's stored
+  record, `google.account_email`, served from the decoded-store cache); replying to your own
+  message goes to its original recipients, never to yourself. `gmail_list` resolves its label
+  like `gmail_label` (case-insensitive). `gmail_label` needs no lookup for system labels (INBOX,
+  UNREAD, STARRED, …, CATEGORY_*); user label names (case-insensitive) come from a
+  per-account `labels.list` cache (fields `labels(id,name)`), re-read once on a miss;
+  mark_read and archive are label changes. `gmail_trash` uses `messages.trash`; nothing deletes permanently.
+- Calendar: list converts the window to UTC (`timeMin/timeMax`), `singleEvents=true`,
+  `orderBy=startTime`, results in `time_zone`, with a fields mask of what the summary uses. Create is destructive (like calendar_create);
+  `sendUpdates` is `all` only with `send_updates=true` (`notify` for delete), else `none`.
+  All-day events use dates with an exclusive end (end ≤ start → one day). Timed values are
+  normalized to ISO 8601 and a bare date without all_day is refused. `gcal_update` reads the
+  event's start/end first: it always sends both in one kind, keeps the duration when only one
+  is given, and `all_day=true/false` switches kinds (both ends required; the other kind's keys
+  are sent as null). Free/busy uses
+  `freeBusy.query` and reports per-calendar errors.
+- Tasks: `@default` list alias kept literal; open tasks only unless `include_completed`
+  (`showCompleted`+`showHidden`); due dates as `YYYY-MM-DDT00:00:00.000Z`.
+- Contacts: connections list sorted by first name; `searchContacts` gets one empty-query
+  warm-up per account per process (Google's advice); create via `people:createContact`.
+- Audit: `bcc` is counted like to/cc (also `emails`); label changes, calendar id and update
+  flags are targets. Subjects, bodies, descriptions, notes are never logged.
+- To verify live: metadata `metadataHeaders` repeated params; body extraction on real
+  multipart mail (inline images, forwarded messages, non-UTF-8 charsets); attachmentId
+  stability between read and download; draft then send_draft appearing in Sent in the right
+  thread; reply threading in Gmail's UI; label names with `/`; Calendar all-day exclusive end
+  and `timeZone` echo; `sendUpdates=none` really sending nothing; free/busy for a non-shared
+  calendar (error reason); Tasks `@default` and `showHidden`; People search warm-up latency
+  (results can lag a few seconds after create). Needs consent for gmail, gcalendar, gtasks
+  and gcontacts first.
 
 Each milestone follows the existing process: tests, then `/simplify`, `/code-review`,
 `/security-review`, then commit and push to `main`.

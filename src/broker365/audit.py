@@ -27,7 +27,7 @@ TARGET_KEYS = (
     "notebook_id", "section_id", "page_id", "save_as", "attachments",
     "link_type", "scope", "confirm",
 )  # fmt: skip
-RECIPIENT_KEYS = ("to", "cc", "attendees")
+RECIPIENT_KEYS = ("to", "cc", "bcc", "attendees", "emails")
 # Ids/links of what a write created or touched, taken from the tool's result.
 RESULT_KEYS = ("id", "draft_id", "path", "web_url", "url", "monitor_url", "local_path")
 MAX_VALUE = 200
