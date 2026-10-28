@@ -185,9 +185,13 @@ def settings(
         "--app-folder/--full-drive",
         help="OneDrive tools only see the app folder (sign in with --scopes files-app).",
     ),
+    block: list[str] = typer.Option(None, "--block", help="Block a tool, e.g. files_delete."),
+    unblock: list[str] = typer.Option(None, "--unblock", help="Allow a blocked tool again."),
 ) -> None:
     """View or change persisted settings (config.toml)."""
-    changed = config.change_settings(
+    # first, so an unknown tool name stops the command before anything else changes
+    changed = _run(services.change_tool_access, block or (), unblock or ())
+    changed |= config.change_settings(
         read_only,
         allow_dir or (),
         disallow_dir or (),

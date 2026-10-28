@@ -206,7 +206,11 @@ def post_settings(body: dict[str, Any]) -> dict[str, Any]:
     add = _field(body, "add_dir", str, required=False)
     remove = _field(body, "remove_dir", str, required=False)
     reset = _field(body, "reset_excel_probe", bool, required=False)
-    changed = config.change_settings(
+    block = _field(body, "block_tool", str, required=False)
+    unblock = _field(body, "unblock_tool", str, required=False)
+    # first, so an unknown tool name is refused before anything else changes
+    changed = services.change_tool_access([block] if block else [], [unblock] if unblock else [])
+    changed |= config.change_settings(
         read_only,
         [add] if add else (),
         [remove] if remove else (),

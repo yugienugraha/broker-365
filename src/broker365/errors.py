@@ -88,5 +88,10 @@ class ReadOnlyMode(Broker365Error):
         super().__init__(f"'{tool}' modifies data but broker365 is in read-only mode")
 
 
+class ToolBlocked(Broker365Error):
+    def __init__(self, tool: str):
+        super().__init__(f"'{tool}' is blocked in broker365's settings; the user can allow it")
+
+
 class PathNotAllowed(Broker365Error):
     """A local path lies outside the allowed directories."""

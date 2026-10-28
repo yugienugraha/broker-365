@@ -281,10 +281,14 @@ def change_settings(
     remove_dirs: Iterable[str] = (),
     reset_excel_probe: bool = False,
     app_folder: bool | None = None,
+    block_tools: Iterable[str] = (),
+    unblock_tools: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Apply user-facing settings changes atomically. Returns what actually changed
-    (`read_only`, `app_folder`, `dirs_added`, `dirs_removed`, `excel_probe_reset`), e.g. for
-    the audit log."""
+    (`read_only`, `app_folder`, `dirs_added`, `dirs_removed`, `excel_probe_reset`,
+    `tools_blocked`, `tools_unblocked`), e.g. for the audit log. Tool names are checked by
+    the caller (services.change_tool_access)."""
+    block, unblock = set(block_tools), set(unblock_tools)
     add = {_allowable_dir(d) for d in add_dirs if d}
     remove: list[tuple[str, str | None]] = []
     for d in remove_dirs:
@@ -322,6 +326,17 @@ def change_settings(
             settings.pop("allowed_dirs", None)
         if reset_excel_probe and settings.pop("excel_backend", None) is not None:
             changed["excel_probe_reset"] = True
+        was = _blocked(settings)
+        now = (was | block) - unblock
+        if now != was:
+            if added := sorted(now - was):
+                changed["tools_blocked"] = added
+            if removed := sorted(was - now):
+                changed["tools_unblocked"] = removed
+        if now:
+            settings["blocked_tools"] = sorted(now)
+        else:
+            settings.pop("blocked_tools", None)
 
     _modify_settings(apply)
     return changed
@@ -339,12 +354,23 @@ def settings_view() -> dict[str, Any]:
         "allowed_dirs": list(settings.get("allowed_dirs", [])),
         "workspace": str(workspace()),
         "excel_backend": dict(settings.get("excel_backend", {})),
+        "blocked_tools": sorted(_blocked(settings)),
     }
 
 
 def read_only() -> bool:
     env = env_flag("BROKER365_READ_ONLY")
     return env if env is not None else bool(load_settings().get("read_only", False))
+
+
+def _blocked(settings: dict[str, Any]) -> set[str]:
+    value = settings.get("blocked_tools")
+    return {t for t in value if isinstance(t, str)} if isinstance(value, list) else set()
+
+
+def blocked_tools() -> set[str]:
+    """Tools the user blocked: hidden from agents and refused when called."""
+    return _blocked(load_settings())
 
 
 def app_folder() -> bool:

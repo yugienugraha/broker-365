@@ -1030,7 +1030,22 @@ function renderSettingsBody(body, s, ctx) {
       : h('p', { class: 'section-gap' }, 'Not tested yet. The check runs on the first Excel request.'),
     h('div', { class: 'row section-gap' }, resetBtn));
 
-  replace(body, readOnly, workspace, folders, excel);
+  // Blocked tools (managed per tool on the Tools page)
+  const blockedList = Array.isArray(s.blocked_tools) ? s.blocked_tools : [];
+  const access = h('section', { class: 'panel', 'aria-labelledby': 'access-title' },
+    h('h2', { id: 'access-title' }, 'Tool access'),
+    h('p', { class: 'muted' },
+      'Block single actions, such as deleting files or sending mail, while the rest keeps working. Blocked tools are hidden from Hermes and refused if called.'),
+    blockedList.length
+      ? h('ul', { class: 'dir-list section-gap' }, blockedList.map((name) => {
+        const allow = h('button', { type: 'button', class: 'btn small', 'aria-label': `Allow ${name}` }, 'Allow');
+        allow.addEventListener('click', () => save(allow, 'Allowing…', { unblock_tool: name }, `${name} allowed`));
+        return h('li', null, h('span', { class: 'path' }, name), allow);
+      }))
+      : h('p', { class: 'section-gap' }, 'No tools are blocked.'),
+    h('div', { class: 'row section-gap' }, h('a', { class: 'btn small', href: '#/tools' }, 'Choose tools to block')));
+
+  replace(body, readOnly, access, workspace, folders, excel);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1209,9 +1224,7 @@ async function renderActivity(view, ctx) {
 async function renderTools(view, ctx) {
   const data = await load(view, ctx, '/api/tools', ctx.reload, pageHead('Tools'));
   if (!data) return;
-  const tools = Array.isArray(data) ? data : [];
-
-  const visible = tools.filter((t) => !t.hidden).length;
+  let tools = Array.isArray(data) ? data : [];
   const search = h('input', { type: 'search', id: 'tool-search', placeholder: 'Search tools', autocomplete: 'off' });
   const listHost = h('div', { 'aria-live': 'polite' });
 
@@ -1250,19 +1263,54 @@ async function renderTools(view, ctx) {
               ? h('span', { class: 'badge slate', title: 'Also needs these permissions' },
                 `Also needs: ${t.requires.map(bundleLabel).join(', ')}`)
               : null,
-            t.hidden ? h('span', { class: 'badge slate', title: 'Hermes cannot see this tool with the current mode or permissions' }, 'Hidden from Hermes') : null),
+            t.blocked ? badge('Blocked', 'bad') : null,
+            t.hidden && !t.blocked ? h('span', { class: 'badge slate', title: 'Hermes cannot see this tool with the current mode or permissions' }, 'Hidden from Hermes') : null,
+            accessSwitch(t)),
           t.description ? h('p', { class: 't-desc' }, t.description) : null))));
     }));
   };
 
+  /** Allowed/Blocked switch for one tool: saves at once, then redraws from /api/tools. */
+  const accessSwitch = (t) => {
+    const id = `allow-${String(t.name).replace(/[^a-z0-9_]/gi, '')}`;
+    const sw = h('input', { type: 'checkbox', role: 'switch', class: 'switch', id, checked: !t.blocked });
+    sw.addEventListener('change', () => {
+      const allow = sw.checked;
+      onAction(sw, null, async () => {
+        try {
+          await api('/api/settings', { method: 'POST', body: allow ? { unblock_tool: t.name } : { block_tool: t.name } });
+        } catch (err) {
+          sw.checked = !allow;
+          throw err;
+        }
+        const next = await api('/api/tools');
+        if (Array.isArray(next)) tools = next;
+        if (ctx.alive()) { drawHead(); draw(); }
+      }, allow ? `${t.name} allowed` : `${t.name} blocked. Restart Hermes to hide it from the tool list.`);
+    });
+    return h('span', { class: 't-access' },
+      h('label', { for: id, class: 'small muted' }, 'Allowed'), sw);
+  };
+
   search.addEventListener('input', draw);
 
+  const headHost = h('div');
+  const drawHead = () => {
+    const visible = tools.filter((t) => !t.hidden).length;
+    const blocked = tools.filter((t) => t.blocked).length;
+    replace(headHost, pageHead('Tools',
+      `${plural(tools.length, 'tool')} in total, ${visible} visible to Hermes right now`
+      + (blocked ? `, ${blocked} blocked` : '')
+      + '. Switch a tool off to block it: Hermes no longer sees it and broker365 refuses it.'));
+  };
+
   replace(view,
-    pageHead('Tools', `${plural(tools.length, 'tool')} in total, ${visible} visible to Hermes right now.`),
+    headHost,
     h('div', { class: 'toolbar' },
       h('label', { for: 'tool-search', class: 'visually-hidden' }, 'Search tools'),
       h('div', { class: 'grow' }, search)),
     listHost);
+  drawHead();
   draw();
 }
 

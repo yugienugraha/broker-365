@@ -403,6 +403,7 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .tools .t-name { font-family: var(--mono); font-weight: 600; font-size: 0.9rem; }
 .tools .t-desc { color: var(--muted); font-size: 0.9rem; margin-top: 4px; max-width: 78ch; }
 .tools li.is-hidden .t-name { color: var(--muted); }
+.tools .t-access { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
 
 /* ---------- dialog ---------- */
 dialog {

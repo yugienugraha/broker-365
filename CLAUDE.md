@@ -10,7 +10,7 @@ The full design, Azure setup and milestones are in **[docs/PLAN.md](docs/PLAN.md
 - **Tokens stay on the user's machine.** There is no hosted backend. Never log tokens, auth codes or file contents.
 - **Incremental consent**: request only the scope bundles a feature needs (`config.SCOPE_BUNDLES`). If a bundle is missing, raise `auth.ConsentRequired` and don't silently re-prompt.
 - Service functions in `services/` are plain sync functions that return JSON-serialisable values, registered with `@tool(bundle, writes=..., destructive=...)`. The CLI (`broker365 call`) and the MCP server both expose the same registry, so don't put Graph logic in `cli.py` or `mcp_server.py`.
-- Flags: `writes=True` for anything that changes data (hidden in read-only mode). `destructive=True` for delete, send, share and invite. In-place file edits are `writes` only, because the eTag guard already prevents silent overwrites.
+- Flags: `writes=True` for anything that changes data (hidden in read-only mode). Users can also block single tools (`blocked_tools` in config.toml): `services.available_tools` hides them and `services.call` raises `ToolBlocked`, so every new tool is blockable for free. `destructive=True` for delete, send, share and invite. In-place file edits are `writes` only, because the eTag guard already prevents silent overwrites.
 - Raise `Broker365Error` subclasses with user-facing messages. The MCP wrapper turns them into `ToolError`, and any other exception text is hidden from the agent.
 - Local filesystem access always goes through `config.resolve_local()`, the workspace sandbox.
 - Mail send/reply/forward create a draft unless `confirm=True`. Approved drafts are sent with `mail_send_draft`, so no orphan drafts are left.

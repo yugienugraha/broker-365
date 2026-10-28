@@ -266,7 +266,7 @@ Device code over chat: since Hermes often runs as a gateway (Telegram/Discord) o
 ## 6. Security model
 - Delegated only → the agent can never do more than the signed-in user can.
 - Tokens never leave the machine; nothing is sent to a broker-365 server (there isn't one).
-- Least privilege: scope bundles opt-in; `read_only = true` config hides all write tools; app-folder mode (`files-app`) confines OneDrive access to `/Apps/<app name>`.
+- Least privilege: scope bundles opt-in; `read_only = true` config hides all write tools; `blocked_tools` (config.toml, CLI `--block`, dashboard Tools page) hides and refuses single tools such as `files_delete`; app-folder mode (`files-app`) confines OneDrive access to `/Apps/<app name>`.
 - Write tools (`send`, `delete`, `share`, overwrite) flagged as destructive in MCP annotations; `mail_send` defaults to draft unless `confirm=true`.
 - `logout` removes accounts from the cache; doc link to <https://myapps.microsoft.com> / <https://account.live.com/consent/Manage> for full revocation.
 - Path-traversal guard on local download/upload paths.

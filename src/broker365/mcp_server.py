@@ -32,6 +32,8 @@ g*, e.g. gdrive_*) for the user's signed-in accounts. Each tool's description ha
 - Tools marked destructive (delete, trash, send, share, invite) need the user's explicit
   go-ahead first. Mail send/reply/forward create a draft by default: show it, and after
   approval send exactly that draft with mail_send_draft(draft_id).
+- A tool the user blocked in broker365's settings is not listed and is refused if called: say
+  so and suggest another way, never try to work around it.
 - A conflict error means the file changed meanwhile: re-read it and retry; nothing was
   overwritten.
 """

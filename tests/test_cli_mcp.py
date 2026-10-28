@@ -93,6 +93,7 @@ def test_tools_catalog_matches_cli_and_flags_hidden(monkeypatch):
         "writes": True,
         "destructive": True,
         "description": catalog["files_delete"]["description"],
+        "blocked": False,
         "hidden": False,
     }
     assert (
@@ -115,6 +116,7 @@ def test_settings_prints_effective_view(tmp_path):
         "read_only_env": False,
         "app_folder": False,
         "app_folder_env": False,
+        "blocked_tools": [],
         "allowed_dirs": [str(d.resolve())],
         "workspace": out["workspace"],
         "excel_backend": {},
@@ -128,3 +130,20 @@ def test_scopes_help_lists_user_bundles():
 
     assert config.user_bundles()[0] == "files" and "core" not in config.user_bundles()
     assert "files-shared" in runner.invoke(app, ["login", "--help"]).output
+
+
+def test_blocked_tool_is_hidden_and_refused(monkeypatch):
+    from broker365 import config
+    from broker365.errors import ToolBlocked
+
+    out = json.loads(runner.invoke(app, ["settings", "--block", "files_delete"]).output)
+    assert out["blocked_tools"] == ["files_delete"] and config.blocked_tools() == {"files_delete"}
+    assert "files_delete" not in {t.name for t in services.available_tools()}
+    with pytest.raises(ToolBlocked, match="blocked"):
+        services.call("files_delete", item="/a.txt")  # refused before any Graph request
+    names = {t.name for t in asyncio.run(mcp_server.build_server().list_tools())}
+    assert "files_delete" not in names and "files_list" in names
+    r = runner.invoke(app, ["settings", "--block", "no_such_tool"])
+    assert r.exit_code != 0 and "no_such_tool" in r.output
+    out = json.loads(runner.invoke(app, ["settings", "--unblock", "files_delete"]).output)
+    assert out["blocked_tools"] == [] and "files_delete" in services.load_all()

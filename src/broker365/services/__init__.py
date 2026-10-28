@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from broker365 import audit, config, providers
-from broker365.errors import Broker365Error, ConsentRequired, ReadOnlyMode
+from broker365.errors import Broker365Error, ConsentRequired, ReadOnlyMode, ToolBlocked
 
 SERVICE_MODULES = (
     "account",
@@ -94,16 +94,28 @@ def load_all() -> dict[str, Tool]:
 
 
 def available_tools() -> list[Tool]:
-    tools = load_all().values()
-    if config.read_only():
-        return [t for t in tools if not t.writes]
-    return list(tools)
+    """Tools agents can see: not blocked by the user, and no write tools in read-only mode."""
+    blocked, read_only = config.blocked_tools(), config.read_only()
+    return [
+        t for t in load_all().values() if t.name not in blocked and not (read_only and t.writes)
+    ]
+
+
+def change_tool_access(block: Iterable[str] = (), unblock: Iterable[str] = ()) -> dict[str, Any]:
+    """Block or allow tools by name (config.toml `blocked_tools`); unknown names are refused.
+    Returns what changed, as config.change_settings does."""
+    block, unblock = list(block), list(unblock)
+    tools = load_all()
+    if unknown := sorted({n for n in (*block, *unblock) if n not in tools}):
+        raise Broker365Error(f"Unknown tool(s): {', '.join(unknown)}. See: broker365 tools")
+    return config.change_settings(block_tools=block, unblock_tools=unblock)
 
 
 def tool_catalog() -> list[dict[str, Any]]:
-    """Every registered tool with its flags; `hidden` marks tools agents can't see right now
-    (write tools in read-only mode)."""
+    """Every registered tool with its flags; `blocked` marks tools the user blocked and
+    `hidden` tools agents can't see right now (blocked, or write tools in read-only mode)."""
     visible = {t.name for t in available_tools()}
+    blocked = config.blocked_tools()
     return [
         {
             "name": t.name,
@@ -113,6 +125,7 @@ def tool_catalog() -> list[dict[str, Any]]:
             "writes": t.writes,
             "destructive": t.destructive,
             "description": t.description.splitlines()[0],
+            "blocked": t.name in blocked,
             "hidden": t.name not in visible,
         }
         for t in load_all().values()
@@ -134,6 +147,8 @@ def call(name: str, /, **kwargs: Any) -> Any:
     if name not in tools:
         raise Broker365Error(f"Unknown tool '{name}'. List them with: broker365 tools")
     t = tools[name]
+    if name in config.blocked_tools():
+        raise ToolBlocked(name)
     if t.writes and config.read_only():
         raise ReadOnlyMode(name)
     try:

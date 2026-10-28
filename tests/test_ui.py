@@ -244,8 +244,24 @@ def test_tools_flags_hidden_in_read_only(authed, monkeypatch):
     assert tools["files_delete"]["hidden"] and not tools["files_list"]["hidden"]
     assert "\n" not in tools["files_list"]["description"]
     assert set(tools["files_list"]) == {
-        "name", "provider", "bundle", "requires", "writes", "destructive", "description", "hidden"
+        "name", "provider", "bundle", "requires", "writes", "destructive", "description",
+        "blocked", "hidden",
     }  # fmt: skip
+
+
+def test_block_and_allow_a_tool(authed):
+    s = authed.post("/api/settings", headers=API, json={"block_tool": "files_delete"}).json()
+    assert s["blocked_tools"] == ["files_delete"]
+    tools = {t["name"]: t for t in authed.get("/api/tools", headers=API).json()}
+    assert tools["files_delete"]["blocked"] and tools["files_delete"]["hidden"]
+    assert not tools["files_list"]["blocked"]
+    r = authed.post("/api/settings", headers=API, json={"block_tool": "nope", "read_only": True})
+    assert r.status_code == 400 and "nope" in r.json()["error"]
+    assert config.read_only() is False  # nothing changed with an unknown tool
+    s = authed.post("/api/settings", headers=API, json={"unblock_tool": "files_delete"}).json()
+    assert s["blocked_tools"] == []
+    admin = [e["target"] for e in audit.read() if e["tool"] == "admin:settings"]
+    assert admin == [{"tools_unblocked": ["files_delete"]}, {"tools_blocked": ["files_delete"]}]
 
 
 def test_activity(authed):

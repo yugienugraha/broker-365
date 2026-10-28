@@ -96,6 +96,9 @@ broker365 call word_create '{"remote_path": "/Notes.docx", "markdown": "# Hello\
 ## Safety
 - Everything is delegated: the agent can do only what the signed-in user can.
 - `broker365 settings --read-only` hides every write tool.
+- `broker365 settings --block files_delete` blocks a single tool (repeat `--block` for more,
+  `--unblock` to allow again). Blocked tools are hidden from agents and refused if called; the
+  dashboard's Tools page has an Allowed switch per tool. Restart Hermes to refresh its tool list.
 - Local file access is sandboxed to `$BROKER365_HOME/files`. Add more with `--allow-dir`. On Windows, UNC, device and drive-relative paths are rejected before they are touched, so a prompt-injected `\\host\share` path cannot leak NTLM credentials.
 - Every write operation is recorded in `$BROKER365_HOME/audit.log` (tool, time, outcome, target ids/paths; never content).
 - Mail send/reply/forward create drafts by default. The agent sends the approved draft with `mail_send_draft`.
