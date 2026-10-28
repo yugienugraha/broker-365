@@ -74,7 +74,7 @@ broker365 call files_list '{"path": "/"}'
 - `BROKER365_CLIENT_ID` overrides the built-in client ID (bring-your-own app registration).
 - `BROKER365_GOOGLE_CLIENT_ID` / `BROKER365_GOOGLE_CLIENT_SECRET` override the built-in Google Desktop client (docs/GOOGLE_PLAN.md).
 - Broker home resolution: `BROKER365_HOME` → `$HERMES_HOME/broker365` → `~/.broker365`.
-- Other env vars: `BROKER365_ACCOUNT`, `BROKER365_READ_ONLY`, `BROKER365_WORKSPACE`, `BROKER365_ALLOWED_DIRS`, `BROKER365_PLAINTEXT_CACHE` (tests/CI only).
+- Other env vars: `BROKER365_ACCOUNT`, `BROKER365_READ_ONLY`, `BROKER365_APP_FOLDER`, `BROKER365_WORKSPACE`, `BROKER365_ALLOWED_DIRS`, `BROKER365_PLAINTEXT_CACHE` (tests/CI only).
 - Hermes passes MCP servers a **filtered environment**, so `hermes install` writes `BROKER365_HOME` (and the client ID, if set) into the server's `env:` block.
 - Hermes on the dev machine: v0.21.2, `HERMES_HOME=%LOCALAPPDATA%\hermes`. MCP servers are configured under `mcp_servers:` in `$HERMES_HOME/config.yaml`, and their tools register as `mcp_<server>_<tool>`. The server key we use is `m365`.
 

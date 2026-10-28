@@ -35,12 +35,15 @@ seg = transport.seg  # used by the Microsoft services as graph.seg
 
 def item_ref(item: str, drive: str = "/me/drive") -> str:
     """Drive item reference from an id or an absolute path ('/Docs/a.xlsx') inside `drive`
-    (the user's OneDrive by default; '/drives/{id}' or '/sites/{id}/drive' for SharePoint)."""
+    (the user's OneDrive by default; '/drives/{id}' or '/sites/{id}/drive' for SharePoint).
+    In app-folder mode, paths in the user's OneDrive start at the app folder."""
     if not item:
         raise Broker365Error("A file id or path is required")
     if item.startswith("/"):
         path = item.rstrip("/")
-        return f"{drive}/root" if not path else f"{drive}/root:{quote(path)}:"
+        app = drive == "/me/drive" and config.app_folder()
+        root = f"{drive}/special/approot" if app else f"{drive}/root"
+        return root if not path else f"{root}:{quote(path)}:"
     return f"{drive}/items/{quote(item, safe='!')}"
 
 
@@ -198,4 +201,5 @@ class GraphClient(transport.JsonVerbs):
 
 
 def client(bundle: str) -> GraphClient:
-    return GraphClient(bundle)
+    """A client for `bundle`; `files` becomes `files-app` in app-folder mode."""
+    return GraphClient(config.files_bundle() if bundle == "files" else bundle)

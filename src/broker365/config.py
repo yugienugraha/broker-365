@@ -60,6 +60,7 @@ MSA_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 SCOPE_BUNDLES: dict[str, list[str]] = {
     "core": ["User.Read"],
     "files": ["Files.ReadWrite"],
+    "files-app": ["Files.ReadWrite.AppFolder"],
     "files-shared": ["Files.ReadWrite.All"],
     "sharepoint": ["Sites.ReadWrite.All"],
     "mail": ["Mail.ReadWrite", "Mail.Send"],
@@ -279,9 +280,11 @@ def change_settings(
     add_dirs: Iterable[str] = (),
     remove_dirs: Iterable[str] = (),
     reset_excel_probe: bool = False,
+    app_folder: bool | None = None,
 ) -> dict[str, Any]:
     """Apply user-facing settings changes atomically. Returns what actually changed
-    (`read_only`, `dirs_added`, `dirs_removed`, `excel_probe_reset`), e.g. for the audit log."""
+    (`read_only`, `app_folder`, `dirs_added`, `dirs_removed`, `excel_probe_reset`), e.g. for
+    the audit log."""
     add = {_allowable_dir(d) for d in add_dirs if d}
     remove: list[tuple[str, str | None]] = []
     for d in remove_dirs:
@@ -301,6 +304,10 @@ def change_settings(
             if bool(settings.get("read_only", False)) != read_only:
                 changed["read_only"] = read_only
             settings["read_only"] = read_only
+        if app_folder is not None:
+            if bool(settings.get("app_folder", False)) != app_folder:
+                changed["app_folder"] = app_folder
+            settings["app_folder"] = app_folder
         old = set(settings.get("allowed_dirs", []))
         new = old | add
         new = {s for s in new if not any(_same_dir(s, raw, norm) for raw, norm in remove)}
@@ -327,6 +334,8 @@ def settings_view() -> dict[str, Any]:
     return {
         "read_only": env if env is not None else bool(settings.get("read_only", False)),
         "read_only_env": env is not None,
+        "app_folder": app_folder(),
+        "app_folder_env": env_flag("BROKER365_APP_FOLDER") is not None,
         "allowed_dirs": list(settings.get("allowed_dirs", [])),
         "workspace": str(workspace()),
         "excel_backend": dict(settings.get("excel_backend", {})),
@@ -336,6 +345,19 @@ def settings_view() -> dict[str, Any]:
 def read_only() -> bool:
     env = env_flag("BROKER365_READ_ONLY")
     return env if env is not None else bool(load_settings().get("read_only", False))
+
+
+def app_folder() -> bool:
+    """OneDrive app-folder mode: the file tools use the `files-app` bundle
+    (Files.ReadWrite.AppFolder) and every path is inside the app's own folder
+    (/Apps/<app name>), a limit Microsoft enforces on the token itself."""
+    env = env_flag("BROKER365_APP_FOLDER")
+    return env if env is not None else bool(load_settings().get("app_folder", False))
+
+
+def files_bundle() -> str:
+    """The bundle behind the OneDrive file tools: `files-app` in app-folder mode."""
+    return "files-app" if app_folder() else "files"
 
 
 # ---- local filesystem sandbox ---------------------------------------------------------

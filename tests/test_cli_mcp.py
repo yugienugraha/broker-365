@@ -113,6 +113,8 @@ def test_settings_prints_effective_view(tmp_path):
     assert out == {
         "read_only": False,
         "read_only_env": False,
+        "app_folder": False,
+        "app_folder_env": False,
         "allowed_dirs": [str(d.resolve())],
         "workspace": out["workspace"],
         "excel_backend": {},

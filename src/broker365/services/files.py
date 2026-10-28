@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
-from broker365 import config, graph
+from broker365 import auth, config, graph
 from broker365.errors import Broker365Error, GraphError
 from broker365.graph import item_ref
 from broker365.services import tool
@@ -22,10 +22,13 @@ TEXT_READ_MAX = 1_000_000
 def summarize(item: dict[str, Any]) -> dict[str, Any]:
     parent = (item.get("parentReference") or {}).get("path", "")
     folder = parent.split("root:", 1)[1] if "root:" in parent else ""
+    path = f"{folder}/{item.get('name', '')}" if parent else "/"
+    if parent.startswith("/drive/root:") and config.app_folder():
+        path = _in_app_folder(path)
     return {
         "id": item.get("id"),
         "name": item.get("name"),
-        "path": f"{folder}/{item.get('name', '')}" if parent else "/",
+        "path": path,
         "type": "folder" if "folder" in item else "file",
         "size": item.get("size"),
         "modified": item.get("lastModifiedDateTime"),
@@ -36,6 +39,27 @@ def summarize(item: dict[str, Any]) -> dict[str, Any]:
 
 def _g() -> graph.GraphClient:
     return graph.client("files")
+
+
+_approot: dict[str, str] = {}  # account -> app folder's drive path, e.g. "/Apps/broker365"
+
+
+def _in_app_folder(path: str) -> str:
+    """A drive path as a path inside the app folder ('/' = the app folder itself), so the
+    paths tools return can be passed straight back in app-folder mode."""
+    try:
+        key = auth.current_account().get("username") or ""
+    except Broker365Error:
+        key = ""
+    if key not in _approot:
+        meta = _g().get("/me/drive/special/approot")
+        parent = (meta.get("parentReference") or {}).get("path", "")
+        folder = parent.split("root:", 1)[1] if "root:" in parent else ""
+        _approot[key] = f"{folder}/{meta.get('name', '')}"
+    root, low = _approot[key], path.lower()
+    if low == root.lower():
+        return "/"
+    return path[len(root) :] if low.startswith(root.lower() + "/") else path
 
 
 def get_item(item: str) -> dict[str, Any]:
@@ -180,15 +204,17 @@ def stream_local(
 
 @tool("files")
 def files_list(path: str = "/", limit: int = 100) -> list[dict[str, Any]]:
-    """List a OneDrive folder. `path` is absolute ('/' = root, '/Documents') or an item id."""
+    """List a OneDrive folder. `path` is absolute ('/' = root, '/Documents') or an item id.
+    In app-folder mode '/' is the app folder and every path is inside it."""
     return [summarize(i) for i in _g().paged(f"{item_ref(path)}/children", limit=limit)]
 
 
 @tool("files")
 def files_search(query: str, limit: int = 25) -> list[dict[str, Any]]:
-    """Search file names and content across the user's OneDrive."""
+    """Search file names and content across the user's OneDrive (only the app folder in
+    app-folder mode)."""
     q = graph.odata_str(query)
-    return [summarize(i) for i in _g().paged(f"/me/drive/root/search(q='{q}')", limit=limit)]
+    return [summarize(i) for i in _g().paged(f"{item_ref('/')}/search(q='{q}')", limit=limit)]
 
 
 @tool("files")

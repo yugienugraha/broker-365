@@ -180,10 +180,19 @@ def settings(
     reset_excel_probe: bool = typer.Option(
         False, "--reset-excel-probe", help="Re-test Excel API support on personal accounts."
     ),
+    app_folder: bool = typer.Option(
+        None,
+        "--app-folder/--full-drive",
+        help="OneDrive tools only see the app folder (sign in with --scopes files-app).",
+    ),
 ) -> None:
     """View or change persisted settings (config.toml)."""
     changed = config.change_settings(
-        read_only, allow_dir or (), disallow_dir or (), reset_excel_probe=reset_excel_probe
+        read_only,
+        allow_dir or (),
+        disallow_dir or (),
+        reset_excel_probe=reset_excel_probe,
+        app_folder=app_folder,
     )
     if changed:
         audit.record_admin("settings", changed)

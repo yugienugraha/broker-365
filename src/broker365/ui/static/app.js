@@ -272,6 +272,7 @@ function confirmDialog({ title, message, confirmLabel, danger = false }) {
 
 const BUNDLES = {
   files: { label: 'OneDrive files', desc: 'Your OneDrive, including Excel, Word and PowerPoint files' },
+  'files-app': { label: 'OneDrive app folder only', desc: 'Only /Apps/broker365 and its subfolders (needs app-folder mode)' },
   'files-shared': { label: 'Files shared with me', desc: 'Files and folders other people shared with you' },
   sharepoint: { label: 'SharePoint', desc: 'Team sites and document libraries (work or school)' },
   mail: { label: 'Mail', desc: 'Read mail and write drafts' },
