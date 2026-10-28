@@ -336,3 +336,69 @@ def test_download_default_name_is_sanitised(httpx_mock):
 )
 def test_local_name_avoids_windows_device_names(remote, local):
     assert files.local_name(remote) == local
+
+
+# ---- app-folder mode ------------------------------------------------------------------
+
+APPROOT = {
+    "id": "R!1",
+    "name": "broker365",
+    "folder": {},
+    "parentReference": {"path": "/drive/root:/Apps"},
+}
+
+
+@pytest.fixture
+def app_folder(monkeypatch):
+    monkeypatch.setenv("BROKER365_APP_FOLDER", "1")
+    monkeypatch.setattr(files, "_approot", {})
+    monkeypatch.setattr(files.auth, "current_account", lambda username=None: {"username": "u"})
+    tokens: list[str] = []
+    monkeypatch.setattr(graph.auth, "get_token", lambda b, u=None: tokens.append(b) or "t")
+    return tokens
+
+
+def test_app_folder_paths_start_at_the_app_folder(httpx_mock, app_folder):
+    item = {**ITEM, "parentReference": {"path": "/drive/root:/Apps/broker365/Proyek"}}
+    httpx_mock.add_response(
+        url=f"{G}/me/drive/special/approot:/Proyek:/children?%24top=100", json={"value": [item]}
+    )
+    httpx_mock.add_response(url=f"{G}/me/drive/special/approot", json=APPROOT)
+    out = files.files_list("/Proyek")
+    assert out[0]["path"] == "/Proyek/a.txt"
+    assert set(app_folder) == {"files-app"}  # never a full-drive token
+
+
+def test_app_folder_root_and_search(httpx_mock, app_folder):
+    httpx_mock.add_response(
+        url=f"{G}/me/drive/special/approot/search(q='x')?%24top=25",
+        json={"value": [{**ITEM, "parentReference": {"path": "/drive/root:/Apps/Broker365"}}]},
+    )
+    httpx_mock.add_response(url=f"{G}/me/drive/special/approot", json=APPROOT)
+    assert files.files_search("x")[0]["path"] == "/a.txt"  # case-insensitive prefix
+    assert files.summarize(APPROOT)["path"] == "/"
+
+
+def test_app_folder_upload_and_mkdir(httpx_mock, app_folder):
+    httpx_mock.add_response(
+        url=f"{G}/me/drive/special/approot:/Proyek/n.txt:/content?%40microsoft.graph.conflictBehavior=fail",
+        json={**ITEM, "parentReference": {"path": "/drive/root:/Apps/broker365/Proyek"}},
+    )
+    httpx_mock.add_response(url=f"{G}/me/drive/special/approot", json=APPROOT)
+    assert files.files_write_text("/Proyek/n.txt", "hi")["path"] == "/Proyek/a.txt"
+    httpx_mock.add_response(
+        url=f"{G}/me/drive/special/approot/children", json={**APPROOT, "name": "Baru"}
+    )
+    files.files_mkdir("/Baru")
+
+
+def test_app_folder_setting_and_default_bundle(monkeypatch):
+    from broker365.providers.microsoft import MicrosoftProvider
+
+    assert MicrosoftProvider().default_bundles() == ["files"]
+    assert config.change_settings(app_folder=True) == {"app_folder": True}
+    assert config.app_folder() and config.settings_view()["app_folder"]
+    assert MicrosoftProvider().default_bundles() == ["files-app"]
+    assert graph.item_ref("/drives/d1/x", "/drives/d1") == "/drives/d1/root:/drives/d1/x:"
+    monkeypatch.setenv("BROKER365_APP_FOLDER", "0")
+    assert not config.app_folder()

@@ -24,6 +24,9 @@ setup on the user's side, and tokens stay on this machine.
 2. If not signed in, or a tool reports a missing permission, call
    `mcp_m365_account_login_start` with `scopes` set to what's needed. Bundles: `files`,
    `mail`, `calendar`, `contacts`, `tasks`, `files-shared`, `sharepoint`, `onenote`.
+   If `broker365 settings` shows `app_folder: true`, ask for `files-app` instead of `files`:
+   OneDrive paths then start at the app folder (`/` = `/Apps/broker365`) and nothing outside
+   it is reachable.
 3. Microsoft (`kind: "device_code"`): send the user the `verification_uri` and `user_code`, and
    ask them to sign in from any device.
 4. Call `mcp_m365_account_login_complete` with the `flow_id`. Repeat while status is `pending`.

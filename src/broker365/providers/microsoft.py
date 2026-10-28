@@ -23,7 +23,7 @@ class MicrosoftProvider:
         return {b: list(config.SCOPE_BUNDLES[b]) for b in config.user_bundles()}
 
     def default_bundles(self) -> list[str]:
-        return config.user_bundles()[:1]
+        return [config.files_bundle()]
 
     def list_accounts(self) -> list[dict[str, Any]]:
         return [

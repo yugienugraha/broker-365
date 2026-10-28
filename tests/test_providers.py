@@ -412,7 +412,7 @@ def test_cli_login_complete_with_redirect_url(fake_provider):
 
 
 def test_cli_scopes_help_lists_microsoft_bundles():
-    assert "microsoft: files, files-shared, sharepoint" in cli.ScopesOpt.help
+    assert "microsoft: files, files-app, files-shared, sharepoint" in cli.ScopesOpt.help
 
 
 # ---- resolve / validate / check_token ---------------------------------------------------

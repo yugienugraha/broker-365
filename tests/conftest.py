@@ -23,6 +23,7 @@ def isolated(tmp_path, monkeypatch, httpx_mock):
         "HERMES_HOME",
         "BROKER365_ACCOUNT",
         "BROKER365_READ_ONLY",
+        "BROKER365_APP_FOLDER",
         "BROKER365_ALLOWED_DIRS",
         "BROKER365_WORKSPACE",
         "BROKER365_GOOGLE_CLIENT_ID",

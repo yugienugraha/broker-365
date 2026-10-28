@@ -101,6 +101,7 @@ Add these; we request them **incrementally** at runtime, so the user only consen
 |---|---|---|
 | core (always) | `openid`, `profile`, `offline_access`, `User.Read` | No |
 | files (OneDrive, Excel, Word, PowerPoint) | `Files.ReadWrite` (own drive). Optional `Files.ReadWrite.All` for files shared with the user | No (`.All` also No for delegated) |
+| files-app (app-folder mode) | `Files.ReadWrite.AppFolder`: only `/Apps/<app name>` and its subfolders, enforced by Microsoft | No |
 | sharepoint | `Sites.ReadWrite.All` | No for delegated (tenant policy may differ) |
 | mail | `Mail.ReadWrite`, `Mail.Send` | No |
 | calendar | `Calendars.ReadWrite` | No |
@@ -182,6 +183,20 @@ Broker home (see §5a for resolution order; default `~/.broker365/`):
 | `files_share(id, type, scope)` | `POST /me/drive/items/{id}/createLink` |
 | `files_convert(id, fmt)` | `GET /me/drive/items/{id}/content?format=pdf` (≤2 MB source) |
 
+#### App-folder mode (`files-app`)
+For users who want the agent limited to one folder, `broker365 settings --app-folder` (or
+`BROKER365_APP_FOLDER=1`) switches every OneDrive tool (files, Excel, Word, PowerPoint) to the
+`files-app` bundle (`Files.ReadWrite.AppFolder`). Paths are then relative to the app folder:
+`/` is `/me/drive/special/approot` (`/Apps/<app name>`, created by Graph on first use) and
+`/Proyek/a.docx` is `/me/drive/special/approot:/Proyek/a.docx:`. Returned `path`s have the app
+folder prefix stripped so they round-trip. Microsoft enforces the limit, so ids outside the
+folder fail too. Sub-folders are how users organise work inside it.
+- The limit holds only if the account **never granted** `Files.ReadWrite`/`.All` (or
+  `Sites.ReadWrite.All`) to the app: Microsoft issues Graph tokens with every scope the user
+  has consented. Switching an existing account: revoke the app at
+  account.live.com/consent/Manage or myapps.microsoft.com, then `broker365 login --scopes files-app`.
+- Not verified live yet: Excel Workbook API, search and `createLink` under the AppFolder scope.
+
 ### What Graph actually offers per Office app (verified against Microsoft Learn, Oct 2026)
 
 | | Excel | Word | PowerPoint |
@@ -251,7 +266,7 @@ Device code over chat: since Hermes often runs as a gateway (Telegram/Discord) o
 ## 6. Security model
 - Delegated only → the agent can never do more than the signed-in user can.
 - Tokens never leave the machine; nothing is sent to a broker-365 server (there isn't one).
-- Least privilege: scope bundles opt-in; `read_only = true` config hides all write tools.
+- Least privilege: scope bundles opt-in; `read_only = true` config hides all write tools; app-folder mode (`files-app`) confines OneDrive access to `/Apps/<app name>`.
 - Write tools (`send`, `delete`, `share`, overwrite) flagged as destructive in MCP annotations; `mail_send` defaults to draft unless `confirm=true`.
 - `logout` removes accounts from the cache; doc link to <https://myapps.microsoft.com> / <https://account.live.com/consent/Manage> for full revocation.
 - Path-traversal guard on local download/upload paths.
